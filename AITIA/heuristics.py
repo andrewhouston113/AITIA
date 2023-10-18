@@ -1,6 +1,7 @@
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from AITIA.utils import extract_decision_tree
+from scipy.stats import norm
 import numpy as np
 import pandas as pd
 
@@ -333,7 +334,6 @@ class KDisagreeingNeighbors:
         # Fit a NearestNeighbours algorithm to X
         nn = KNeighborsClassifier(n_neighbors=n_neighbors)
         self.nearest_neighbors = nn.fit(X, y)
-
 
     def calculate(self, X, y):
         """
