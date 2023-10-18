@@ -1,6 +1,6 @@
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
-from AITIA.utils import extract_decision_tree
+from AITIA.utils import extract_decision_tree, diversity_degree
 from scipy.stats import norm
 import numpy as np
 import pandas as pd
@@ -16,14 +16,14 @@ class DisjunctSize:
 
     Methods:
     - fit(X, y): Fit a DecisionTreeClassifier to the provided dataset and extract its structure.
-    - calculate(X_new): Calculate normalized disjunct sizes for new instances based on the fitted decision tree.
+    - calculate(X): Calculate normalized disjunct sizes for new instances based on the fitted decision tree.
     - extract_decision_tree(tree, node=0, depth=0): Helper method to extract the decision tree structure.
     - get_leaf_size(node, instance): Helper method to determine the leaf size for a given instance.
 
     Example Usage:
     >>> disjunct_size = DisjunctSize()
     >>> disjunct_size.fit(X_train, y_train)
-    >>> sizes = disjunct_size.calculate(X_new)
+    >>> sizes = disjunct_size.calculate(X_test)
     """
 
     def __init__(self):
@@ -148,26 +148,32 @@ class DisjunctSize:
             # If the node is a leaf, return its instance count
             return node["instances_count"]
         
-class DisjunctClassPercentage:
+
+class DisjunctClass:
     """
-    DisjunctClassPercentage is a class for calculating percentage of instances in the same leaf node that share the same class as a new instances based on a fitted decision tree.
+    DisjunctClass is a class for calculating percentage of instances in the same leaf node that share the same class as a new instances based on a fitted decision tree
+      and the diversity of instances in the same leaf node as a new instances.
 
     Attributes:
     decision_tree (dict or None): Placeholder for the extracted decision tree structure.
 
     Methods:
     - fit(X, y): Fit a DecisionTreeClassifier to the provided dataset and extract its structure.
-    - calculate(X_new): Calculate disjunct class percentages for new instances based on the fitted decision tree.
-    - get_leaf_percentage(node, instance): Helper method to determine the percentage of instances in the same leaf node that share the same class as a new instance.
+    - calculate_percentage(X, y): Calculate disjunct class percentages for new instances based on the fitted decision tree.
+    - calculate_diversity(X): Calculate disjunct class diversity for new instances based on the fitted decision tree.
+    - get_leaf_percentage(node, instance, instance_class): Helper method to determine the percentage of instances in the same leaf node that share the same class as a new instance.
+    - get_leaf_diversity(node, instance): Helper method to determine the diversity of instances in the same leaf node as a new instance.
 
     Example Usage:
-    >>> disjunct_size = DisjunctSize()
-    >>> disjunct_size.fit(X_train, y_train)
-    >>> sizes = disjunct_size.calculate(X_new)
+    >>> disjunct_class = DisjunctSize()
+    >>> disjunct_class.fit(X_train, y_train, max_depth=4)
+    >>> percentage = disjunct_class.calculate_percentage(X_test, y_test)
+    >>> diversity = disjunct_size.calculate_diversity(X_test)
     """
 
     def __init__(self):
         self.decision_tree = None
+        self.n_classes = None
 
     def fit(self, X, y, max_depth=4, balanced=False):
         """
@@ -196,6 +202,9 @@ class DisjunctClassPercentage:
         if isinstance(y, (pd.Series, pd.DataFrame)):
             y = y.values
         
+        #Calculate and store the number of unique classes
+        self.n_classes = len(np.unique(y))
+        
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
             X = X.reshape(-1, 1)
@@ -213,7 +222,7 @@ class DisjunctClassPercentage:
         # Extract and store the decision tree in a dictionary format
         self.decision_tree = extract_decision_tree(clf.tree_, X, y, node=0, depth=0)
 
-    def calculate(self, X, y):
+    def calculate_percentage(self, X, y):
         """
         Calculate disjunct class percentages for a list of new instances based on the previously fitted decision tree.
 
@@ -248,6 +257,40 @@ class DisjunctClassPercentage:
 
         return disjunct_class_percentages
     
+    def calculate_diversity(self, X):
+        """
+        Calculate disjunct class diversity for a list of new instances based on the previously fitted decision tree.
+
+        Parameters:
+        X (array-like): List of new instances for which disjunct class diversity need to be calculated.
+
+        Returns:
+        list: A list of disjunct class diversity for each input instance in X.
+        """
+        # Check if X is a supported data type
+        if not isinstance(X, (np.ndarray, pd.DataFrame, pd.Series)):
+            raise ValueError("X must be a NumPy array, pandas DataFrame, or pandas Series.")
+
+        # Convert X to a NumPy array if it's a DataFrame or Series
+        if isinstance(X, (pd.DataFrame, pd.Series)):
+            X = X.values
+        
+        # Ensure X is 2-dimensional in shape
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+
+        # Store the dataset X as a float32 array
+        X = X.astype(np.float32)
+
+        # Initialize a list to store the normalized disjunct sizes for new instances
+        disjunct_class_diversities = []
+        
+        for instance in X:
+            # Calculate the disjunct class percentages for the instances
+            disjunct_class_diversities.append(self.get_leaf_diversity(self.decision_tree, instance))
+
+        return disjunct_class_diversities
+    
     def get_leaf_percentage(self, node, instance, instance_class):
         """
         Recursively determine the percentages of instances in a leaf node with the same class label of a given instance in the decision tree structure.
@@ -269,15 +312,38 @@ class DisjunctClassPercentage:
             else:
                 return self.get_leaf_percentage(node["right"], instance, instance_class)
         else:
-            # If the node is a leaf, return its instance count
-            if instance_class in node["instances_by_class"]:
-                return node["instances_by_class"][instance_class]/node["instances_count"]
+            # If the node is a leaf, return its disjunct class percentage
+            return node["instances_by_class"][instance_class]/node["instances_count"]
+
+    
+    def get_leaf_diversity(self, node, instance):
+        """
+        Recursively determine the diversity of instances in a leaf node a given instance in the decision tree structure.
+
+        Parameters:
+        node (dict): The node within the decision tree structure.
+        instance (array-like): The instance for which the leaf size is calculated.
+
+        Returns:
+        float: The diversity of the leaf node that corresponds to the given instance, with the same class label of the given instance.
+        """
+        # Recursive function to determine the leaf size for a given instance
+        if "decision" in node:
+            feature_name = node["decision"]["feature_name"]
+            threshold = node["decision"]["threshold"]
+            if instance[feature_name] <= threshold:
+                return self.get_leaf_diversity(node["left"], instance)
             else:
-                return 0
+                return self.get_leaf_diversity(node["right"], instance)
+        else:
+            # If the node is a leaf, return its diversity
+            node_labels = [x for x, count in enumerate(node["instances_by_class"].values()) for _ in range(count)]
+            return diversity_degree(node_labels, self.n_classes)
             
-class KDisagreeingNeighbors:
+
+class KNeighbors:
     """
-    KDisagreeingNeighbors is a class for calculating the disagreeing neighbors percentage for a set of instances using k-Nearest Neighbors.
+    KNeighbors is a class for calculating the disagreeing neighbors percentage and diverse neighbors score for a set of instances using k-Nearest Neighbors.
     
     Attributes:
     y: NumPy array, labels for training data.
@@ -285,13 +351,16 @@ class KDisagreeingNeighbors:
 
     Methods:
     - fit(self, X, y, n_neighbors=5): Fits a k-Nearest Neighbors classifier to the training data.
-    - calculate(self, X, y): Calculates the disagreeing neighbors percentage for a set of instances.
+    - calculate_disagreement(self, X, y): Calculates the disagreeing neighbors percentage for a set of instances.
+    - calculate_diversity(self, X, y): Calculates the diverse neighbors score for a set of instances.
     - get_disagreeing_neighbors_percentage(self, instance, instance_class): Calculates the disagreeing neighbors percentage for a single instance.
+    - get_diverse_neighbors_score(self, instance): Calculates the diverse neighbors score for a single instance.
     
     Example usage:
-    >>> knn = KDisagreeingNeighbors()
-    >>> knn.fit(train_X, train_y, n_neighbors=5)
-    >>> results = knn.calculate(test_X, test_y)
+    >>> KNeigh = KNeighbors()
+    >>> KNeigh.fit(X_train, y_train, n_neighbors=5)
+    >>> kdn_score = KNeigh.calculate_disagreement(X_test, y_test)
+    >>> kdivn_score = KNeigh.calculate_diversity(X_test)
     """
     def __init__(self):
         self.y = None
@@ -335,7 +404,7 @@ class KDisagreeingNeighbors:
         nn = KNeighborsClassifier(n_neighbors=n_neighbors)
         self.nearest_neighbors = nn.fit(X, y)
 
-    def calculate(self, X, y):
+    def calculate_disagreement(self, X, y):
         """
         Calculate the disagreeing neighbors percentages for a list of new instances based on the previously fitted nearest neighbours classifier.
 
@@ -368,6 +437,39 @@ class KDisagreeingNeighbors:
 
         return disagreeing_neighbors
     
+    def calculate_diversity(self, X):
+        """
+        Calculate the diverse neighbors score for a list of new instances based on the previously fitted nearest neighbours classifier.
+
+        Parameters:
+        X (array-like): List of new instances for which diverse neighbors score need to be calculated.
+        y (array-like): The target labels corresponding to the dataset.
+
+        Returns:
+        list: A list of diverse neighbors score for each input instance in X.
+        """
+
+        # Check if X is a supported data type
+        if not isinstance(X, (np.ndarray, pd.DataFrame, pd.Series)):
+            raise ValueError("X must be a NumPy array, pandas DataFrame, or pandas Series.")
+
+        # Convert X to a NumPy array if it's a DataFrame or Series
+        if isinstance(X, (pd.DataFrame, pd.Series)):
+            X = X.values
+        
+        # Ensure X is 2-dimensional in shape
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+
+        # Initialize a list to store the diverse neighbors scores for new instances
+        diverse_neighbors = []
+        
+        for instance in X:
+            # Calculate the diverse neighbors scores for the instances
+            diverse_neighbors.append(self.get_diverse_neighbors_score(instance.reshape(1, -1)))
+
+        return diverse_neighbors
+    
     def get_disagreeing_neighbors_percentage(self, instance, instance_class):
         """
         Calculate the disagreeing neighbors percentage for a single instance.
@@ -379,6 +481,7 @@ class KDisagreeingNeighbors:
         Returns:
         float: The percentage of neighbors whose class is not the same as 'instance_class'.
         """
+
         # Find the indices of the k-nearest neighbors of 'instance'
         neighbors_idx = self.nearest_neighbors.kneighbors(instance, return_distance=False)
         
@@ -389,6 +492,28 @@ class KDisagreeingNeighbors:
         percentage = sum(nn_classes) / len(nn_classes)
         
         return percentage
+    
+    def get_diverse_neighbors_score(self, instance):
+        """
+        Calculate the diverse neighbors score for a single instance.
+
+        Parameters:
+        instance (array-like): The instance for which the diverse neighbors score is calculated.
+
+        Returns:
+        float: The diverse neighbors score for the instance.
+        """
+
+        # Find the indices of the k-nearest neighbors of 'instance'
+        neighbors_idx = self.nearest_neighbors.kneighbors(instance, return_distance=False)
+        
+        # Compare the class labels of neighbors with the true class label of 'instance'
+        nn_classes = [self.y[idx] for idx in neighbors_idx[0]]
+        
+        # Calculate the diverse neighbors score
+        diversity_score = diversity_degree(nn_classes, len(np.unique(self.y)))
+        
+        return diversity_score
 
 
 class ClassLikelihoodDifference:
@@ -427,6 +552,7 @@ class ClassLikelihoodDifference:
         Returns:
         None
         """
+
         if len(X) != len(y):
             raise ValueError("X and y must have the same number of instances.")
         
@@ -468,6 +594,20 @@ class ClassLikelihoodDifference:
         return likelihood_difference
     
     def class_stats(self, X, y, categorical_idx):
+        """
+        Calculate class-specific statistics for features in the input data.
+
+        Parameters:
+        X (numpy.ndarray): The input data with shape (n_samples, n_features) where n_samples is the number of samples,
+            and n_features is the number of features.
+
+        y (numpy.ndarray): The class labels corresponding to each sample in the input data 'X'. It should have shape (n_samples,).
+
+        categorical_idx (list): A list of indices representing categorical features in the input data 'X'.
+
+        Returns:
+        dict: A dictionary containing class-specific statistics for each feature in the input data 'X'.
+        """
         # Get the unique class labels from the 'y' array
         num_classes = np.unique(y)
         # Get the number of features in the input data 'X'
@@ -554,7 +694,7 @@ class ClassLikelihoodDifference:
         
         # Calculate class likelihood for all other classes
         likelihood_other = [self.class_likelihood(instance, class_label) for class_label in self.classes if class_label != instance_class]
-        print(likelihood_actual, likelihood_other)
+
         # Calculate the difference between the actual class likelihood and the maximum likelihood of other classes
         likelihood_difference = likelihood_actual - max(likelihood_other)
         

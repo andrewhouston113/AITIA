@@ -1,3 +1,5 @@
+import numpy as np
+
 def extract_decision_tree(tree, X, y, node=0, depth=0):
         """
         Recursively extract the structure of a decision tree and return it as a dictionary.
@@ -23,15 +25,16 @@ def extract_decision_tree(tree, X, y, node=0, depth=0):
             tree_info["depth"] = depth
             tree_info["instances_count"] = instances_at_leaf
             
-            # Store the count of instances for each unique y value in the leaf
+            # Initialize a dictionary to store the count of instances for each unique y value in the leaf
             instances_by_class = {}
+            unique_classes = set(y)  # Get all unique classes from y
+            for class_label in unique_classes:
+                instances_by_class[class_label] = 0  # Initialize counts to 0
+
             for i in range(len(X)):
                 if tree.apply(X[i].reshape(1, -1))[0] == leaf_node:
                     y_value = y[i]
-                    if y_value in instances_by_class:
-                        instances_by_class[y_value] += 1
-                    else:
-                        instances_by_class[y_value] = 1
+                    instances_by_class[y_value] += 1
 
             tree_info["instances_by_class"] = instances_by_class
 
@@ -50,3 +53,42 @@ def extract_decision_tree(tree, X, y, node=0, depth=0):
             tree_info["right"] = extract_decision_tree(tree, X, y, right_node, depth + 1)
 
         return tree_info
+
+def diversity_degree(data, n_classes):
+    """
+    Calculate the diversity degree of a dataset.
+
+    Args:
+    data (array-like): The input data for which diversity is calculated.
+    n_classes (int): The expected number of unique classes or categories in the data.
+
+    Returns:
+    float: The diversity degree score, ranging from 0 to 1. 
+           0 indicates perfect diversity, 1 means no diversity.
+    """
+    # Calculate the total number of data points
+    N = len(data)
+    
+    # Calculate the count of each unique element in the data
+    _, n = np.unique(data, return_counts=True)
+    
+    # Ensure 'n' has at least 'n_classes' elements to avoid division by zero issues
+    n = np.append(n, [0] * (n_classes - len(n)))
+    
+    # Calculate the Logarithmic Relative Information Deficiency (LRID)
+    LRID = np.nansum([(nc * np.log(N / (n_classes * nc)) if nc > 0 else 0) for nc in n])
+    
+    # Initialize an array for the null diversity
+    null_diversity = np.zeros(n_classes)
+    null_diversity[0] = N
+    
+    # Calculate the information deficiency summation for null diversity
+    null_diversity_LRID = np.nansum([(nc * np.log(N / (n_classes * nc)) if nc > 0 else 0) for nc in null_diversity])
+    
+    # Calculate and return the diversity degree score
+    if LRID == 0:
+        # If LRID is exactly 0, return 1 (perfect diversity)
+        return 1
+    else:
+        # If LRID is not 0, compute diversity degree between 0 and 1
+        return 1 - (LRID / null_diversity_LRID)
