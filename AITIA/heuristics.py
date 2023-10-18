@@ -1,6 +1,8 @@
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from AITIA.utils import extract_decision_tree, diversity_degree
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.preprocessing import MinMaxScaler
 from scipy.stats import norm
 import numpy as np
 import pandas as pd
@@ -57,7 +59,7 @@ class DisjunctSize:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X = X.reshape(-1, 1)
+            X.reshape(1, -1)
 
         # Change type of the dataset X to a float32 array
         X = X.astype(np.float32)
@@ -90,7 +92,7 @@ class DisjunctSize:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X = X.reshape(-1, 1)
+            X.reshape(1, -1)
 
         # Store the dataset X as a float32 array
         X = X.astype(np.float32)
@@ -207,7 +209,7 @@ class DisjunctClass:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X = X.reshape(-1, 1)
+            X.reshape(1, -1)
 
         # Change type of the dataset X to a float32 array
         X = X.astype(np.float32)
@@ -243,7 +245,7 @@ class DisjunctClass:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X = X.reshape(-1, 1)
+            X.reshape(1, -1)
 
         # Store the dataset X as a float32 array
         X = X.astype(np.float32)
@@ -277,7 +279,7 @@ class DisjunctClass:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X = X.reshape(-1, 1)
+            X.reshape(1, -1)
 
         # Store the dataset X as a float32 array
         X = X.astype(np.float32)
@@ -398,7 +400,7 @@ class KNeighbors:
 
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X = X.reshape(-1, 1)
+            X.reshape(1, -1)
         
         # Fit a NearestNeighbours algorithm to X
         nn = KNeighborsClassifier(n_neighbors=n_neighbors)
@@ -426,7 +428,7 @@ class KNeighbors:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X = X.reshape(-1, 1)
+            X.reshape(1, -1)
 
         # Initialize a list to store the disagreeing neighbors scores for new instances
         disagreeing_neighbors = []
@@ -459,7 +461,7 @@ class KNeighbors:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X = X.reshape(-1, 1)
+            X.reshape(1, -1)
 
         # Initialize a list to store the diverse neighbors scores for new instances
         diverse_neighbors = []
@@ -516,9 +518,9 @@ class KNeighbors:
         return diversity_score
 
 
-class ClassLikelihoodDifference:
+class ClassLikelihood:
     """
-    ClassLikelihoodDifference is a class for calculating class likelihood differences for new instances based on a fitted dataset.
+    ClassLikelihood is a class for calculating class likelihood differences, evidence conflict, and evidence volume for new instances based on a fitted dataset.
 
     Attributes:
     data (dict or None): Placeholder for statistics computed from the training dataset.
@@ -526,15 +528,19 @@ class ClassLikelihoodDifference:
 
     Methods:
     - fit(X, y, categorical_idx=[]): Fit the class likelihood model to the provided dataset.
-    - calculate(X, y): Calculate class likelihood differences for a list of new instances based on the training set statistics.
+    - calculate_class_likelihood_difference(X, y): Calculate class likelihood differences for a list of new instances based on the training set statistics.
+    - calculate_evidence_conflict(X, return_evidence_volume=False): Calculate evidence conflict for a list of new instances based on the training set statistics.
     - class_stats(X, y, categorical_idx): Compute statistics for the training dataset, including class counts and feature statistics.
     - class_likelihood(instance, target_class): Calculate the class likelihood for a given instance and a specific target class.
     - class_likelihood_difference(instance, instance_class): Calculate the class likelihood difference for a given instance and its actual class.
+    - evidence_conflict(instance, return_evidence_volume=False): Calculate evidence conflict for a given instance.
+    - evidence_volume(instance, target_class): Calculate evidence volume for an instance belonging to a certain class.
 
     Example Usage:
-    >>> clf = ClassLikelihoodDifference()
+    >>> clf = ClassLikelihood()
     >>> clf.fit(X_train, y_train)
-    >>> likelihood_diff = clf.calculate(X_new, y_new)
+    >>> likelihood_diff = clf.calculate_class_likelihood_difference(X_test, y_test)
+    >>> evidence_conflict, evidence_volume = clf.calculate_evidence_conflict(X_test, return_evidence_volume=True)
     """
 
     def __init__(self):
@@ -560,7 +566,7 @@ class ClassLikelihoodDifference:
         self.data = self.class_stats(X, y, categorical_idx)
         self.classes = np.unique(y)
 
-    def calculate(self, X, y):
+    def calculate_class_likelihood_difference(self, X, y):
         """
         Calculate the class likelihood difference for a list of new instances based on the training set statistics.
 
@@ -582,16 +588,56 @@ class ClassLikelihoodDifference:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X = X.reshape(-1, 1)
+            X = X.reshape(1, -1)
 
-        # Initialize a list to store the likelihood_differences for new instances
+        # Initialize a list to store the likelihood differences for new instances
         likelihood_difference = []
         
         for instance, instance_class in zip(X, y):
-            # Calculate the disagreeing neighbors scores for the instances
+            # Calculate the likelihood differences for the instances
             likelihood_difference.append(self.class_likelihood_difference(instance, instance_class))
 
         return likelihood_difference
+    
+    def calculate_evidence_conflict(self, X, return_evidence_volume = False):
+        """
+        Calculate evidence conflict for a list of new instances based on the training set statistics.
+
+        Parameters:
+        X (array-like): List of new instances for which evidence conflict need to be calculated.
+
+        Returns:
+        list: A list of evidence conflict for each input instance in X (if return_evidence_volume is True).
+        """
+
+        # Check if X is a supported data type
+        if not isinstance(X, (np.ndarray, pd.DataFrame, pd.Series)):
+            raise ValueError("X must be a NumPy array, pandas DataFrame, or pandas Series.")
+
+        # Convert X to a NumPy array if it's a DataFrame or Series
+        if isinstance(X, (pd.DataFrame, pd.Series)):
+            X = X.values
+        
+        # Ensure X is 2-dimensional in shape
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+
+        # Initialize lists to store evidence conflict and evidence volume
+        evidence_conflict = []
+        evidence_volume = []
+
+        for instance in X:
+            # Calculate evidence conflict for the current instance
+            ec, ev = self.evidence_conflict(instance)
+            
+            # Append evidence conflict and volume to the list
+            evidence_conflict.append(ec)
+            evidence_volume.append(ev)
+        
+        if return_evidence_volume:
+            return evidence_conflict, evidence_volume
+        else:
+            return evidence_conflict
     
     def class_stats(self, X, y, categorical_idx):
         """
@@ -613,13 +659,22 @@ class ClassLikelihoodDifference:
         # Get the number of features in the input data 'X'
         num_features = X.shape[1]
 
+        # Calculate the importance of each feature
+        if categorical_idx:
+            mutual_info = mutual_info_classif(X, y, discrete_features=categorical_idx).reshape(-1, 1).flatten()
+        else:
+            mutual_info = mutual_info_classif(X, y).reshape(-1, 1).flatten()
+
+        # Offset mutual information by the lowest value (plus a negligible amount) to account for zeros and negative numbers
+        feat_importance = mutual_info + (min(mutual_info) + 1)
+
         # Create an empty dictionary to store the class statistics
         class_dict = {}
 
         for feature in range(num_features):
             # Check if the current feature is in the list of categorical features
             if feature in categorical_idx:
-                feature_dict = {'type': 'categorical', 'counts': {}}
+                feature_dict = {'type': 'categorical', 'importance': feat_importance[feature], 'counts': {}}
                 all_categories = np.unique(X[:, feature])
                 
                 for class_val in num_classes:
@@ -639,7 +694,7 @@ class ClassLikelihoodDifference:
                 class_dict[feature] = feature_dict
             else:
                 # If it's continuous, create a dictionary to store mean and standard deviation
-                feature_dict = {'type': 'continuous', 'mean': {}, 'std': {}}
+                feature_dict = {'type': 'continuous', 'importance': feat_importance[feature], 'mean': {}, 'std': {}}
                 
                 for class_val in num_classes:
                     x_class = X[y == class_val, feature]
@@ -699,3 +754,69 @@ class ClassLikelihoodDifference:
         likelihood_difference = likelihood_actual - max(likelihood_other)
         
         return likelihood_difference
+
+    def evidence_conflict(self, instance):
+        """
+        Calculate evidence conflict for a given instance.
+
+        Parameters:
+        instance (list or array): A 1-D array or list representing the instance for which to calculate the evidence conflict.
+        return_evidence_volume (bool, optional): Whether to return the evidence volume. Default is False.
+
+        Returns:
+        float: The evidence conflict score for the given instance.
+        float (optional): The evidence volume score for the given instance if return_evidence_volume is True.
+        """
+
+        # Calculate evidence volume for each class
+        evidence_volume_per_class = [self.evidence_volume(instance, class_label) for class_label in self.classes]
+
+        # Find the maximum evidence volume among classes
+        evidence_volume = max(evidence_volume_per_class)
+
+        # Calculate the total evidence across all classes
+        total_evidence = sum(evidence_volume_per_class)
+
+        # Calculate the percentage share of evidence volume for each class
+        evidence_share_per_class = [int((ev / total_evidence) * 100) for ev in evidence_volume_per_class]
+
+        # Create a list of evidence labels based on the percentage share
+        evidence_labels = [x for x, count in enumerate(evidence_share_per_class) for _ in range(count)]
+
+        # Calculate evidence conflict using diversity degree
+        evidence_conflict = diversity_degree(evidence_labels, len(np.unique(self.classes)))
+
+        return evidence_conflict, evidence_volume
+
+    def evidence_volume(self, instance, target_class):
+        """
+        Calculate evidence volume for an instance belonging to a certain class.
+
+        Parameters:
+        instance (list or array): A 1-D array or list representing the instance for which to calculate the evidence volume.
+        target_class (str): The class label for which to calculate evidence volume.
+
+        Returns:
+        list: The normalized evidence volume for the given instance and class for each feature.
+        """
+
+        # Initialize evidence
+        evidence = 1
+
+        # Iterate over features in the data
+        for idx, feature in self.data.items():
+            if feature['type'] == 'continuous':
+                # Calculate evidence for continuous features
+                evidence *= (norm.cdf(instance[idx], loc=feature['mean'][target_class], scale=feature['std'][target_class])) * feature['importance']
+            else:
+                # Calculate evidence for categorical features
+                if instance[idx] not in self.data[idx]['counts'][target_class]:
+                    raise ValueError(f"Category {instance[idx]} not found in the training set for feature {idx}")
+
+                # Calculate evidence using category counts
+                class_total = 0
+                for class_val in self.data[idx]['counts'].keys():
+                    class_total += self.data[idx]['counts'][class_val][instance[idx]]
+                evidence *= (self.data[idx]['counts'][target_class][instance[idx]] / class_total) * feature['importance']
+
+        return evidence
