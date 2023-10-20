@@ -1,9 +1,10 @@
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neighbors import KNeighborsClassifier, NearestNeighbors
 from AITIA.utils import extract_decision_tree, diversity_degree
 from sklearn.feature_selection import mutual_info_classif
 from sklearn.preprocessing import MinMaxScaler
 from scipy.stats import norm
+from scipy.spatial import distance
 import numpy as np
 import pandas as pd
 
@@ -19,8 +20,8 @@ class DisjunctSize:
     Methods:
     - fit(X, y): Fit a DecisionTreeClassifier to the provided dataset and extract its structure.
     - calculate(X): Calculate normalized disjunct sizes for new instances based on the fitted decision tree.
-    - extract_decision_tree(tree, node=0, depth=0): Helper method to extract the decision tree structure.
-    - get_leaf_size(node, instance): Helper method to determine the leaf size for a given instance.
+    - _find_largest_instances_count(dict): Recursively finds the largest value associated with the key 'instances_count' in a nested dictionary.
+    - _get_leaf_size(node, instance): Helper method to determine the leaf size for a given instance.
 
     Example Usage:
     >>> disjunct_size = DisjunctSize()
@@ -59,7 +60,7 @@ class DisjunctSize:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X.reshape(1, -1)
+            X = X.reshape(1, -1)
 
         # Change type of the dataset X to a float32 array
         X = X.astype(np.float32)
@@ -70,7 +71,7 @@ class DisjunctSize:
 
         # Extract and store the decision tree in a dictionary format
         self.decision_tree = extract_decision_tree(clf.tree_, X, y, node=0, depth=0)
-        self.largest_leaf = self.find_largest_instances_count(self.decision_tree)
+        self.largest_leaf = self._find_largest_instances_count(self.decision_tree)
 
     def calculate(self, X):
         """
@@ -92,7 +93,7 @@ class DisjunctSize:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X.reshape(1, -1)
+            X = X.reshape(1, -1)
 
         # Store the dataset X as a float32 array
         X = X.astype(np.float32)
@@ -102,12 +103,12 @@ class DisjunctSize:
         
         for instance in X:
             # Calculate the disjunct size for the instance and normalize it
-            disjunct_size = self.get_leaf_size(self.decision_tree, instance)
+            disjunct_size = self._get_leaf_size(self.decision_tree, instance)
             normalised_disjunct_size.append(disjunct_size / self.largest_leaf)
 
         return normalised_disjunct_size
     
-    def find_largest_instances_count(self, dictionary):
+    def _find_largest_instances_count(self, dictionary):
         """
         Recursively finds the largest value associated with the key 'instances_count' in a nested dictionary.
 
@@ -119,7 +120,7 @@ class DisjunctSize:
         """
         if isinstance(dictionary, dict):
             instances_counts = [v for k, v in dictionary.items() if k == 'instances_count']
-            sub_instances_counts = [self.find_largest_instances_count(v) for v in dictionary.values() if isinstance(v, dict)]
+            sub_instances_counts = [self._find_largest_instances_count(v) for v in dictionary.values() if isinstance(v, dict)]
             all_counts = instances_counts + sub_instances_counts
             if all_counts:
                 return max(all_counts)
@@ -127,7 +128,7 @@ class DisjunctSize:
                 return 0
         return 0
 
-    def get_leaf_size(self, node, instance):
+    def _get_leaf_size(self, node, instance):
         """
         Recursively determine the size of a leaf node for a given instance in the decision tree structure.
 
@@ -143,9 +144,9 @@ class DisjunctSize:
             feature_name = node["decision"]["feature_name"]
             threshold = node["decision"]["threshold"]
             if instance[feature_name] <= threshold:
-                return self.get_leaf_size(node["left"], instance)
+                return self._get_leaf_size(node["left"], instance)
             else:
-                return self.get_leaf_size(node["right"], instance)
+                return self._get_leaf_size(node["right"], instance)
         else:
             # If the node is a leaf, return its instance count
             return node["instances_count"]
@@ -163,8 +164,8 @@ class DisjunctClass:
     - fit(X, y): Fit a DecisionTreeClassifier to the provided dataset and extract its structure.
     - calculate_percentage(X, y): Calculate disjunct class percentages for new instances based on the fitted decision tree.
     - calculate_diversity(X): Calculate disjunct class diversity for new instances based on the fitted decision tree.
-    - get_leaf_percentage(node, instance, instance_class): Helper method to determine the percentage of instances in the same leaf node that share the same class as a new instance.
-    - get_leaf_diversity(node, instance): Helper method to determine the diversity of instances in the same leaf node as a new instance.
+    - _get_leaf_percentage(node, instance, instance_class): Helper method to determine the percentage of instances in the same leaf node that share the same class as a new instance.
+    - _get_leaf_diversity(node, instance): Helper method to determine the diversity of instances in the same leaf node as a new instance.
 
     Example Usage:
     >>> disjunct_class = DisjunctSize()
@@ -209,7 +210,7 @@ class DisjunctClass:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X.reshape(1, -1)
+            X = X.reshape(1, -1)
 
         # Change type of the dataset X to a float32 array
         X = X.astype(np.float32)
@@ -245,7 +246,7 @@ class DisjunctClass:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X.reshape(1, -1)
+            X = X.reshape(1, -1)
 
         # Store the dataset X as a float32 array
         X = X.astype(np.float32)
@@ -255,7 +256,7 @@ class DisjunctClass:
         
         for instance, instance_class in zip(X, y):
             # Calculate the disjunct class percentages for the instances
-            disjunct_class_percentages.append(self.get_leaf_percentage(self.decision_tree, instance, instance_class))
+            disjunct_class_percentages.append(self._get_leaf_percentage(self.decision_tree, instance, instance_class))
 
         return disjunct_class_percentages
     
@@ -279,7 +280,7 @@ class DisjunctClass:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X.reshape(1, -1)
+            X = X.reshape(1, -1)
 
         # Store the dataset X as a float32 array
         X = X.astype(np.float32)
@@ -289,11 +290,11 @@ class DisjunctClass:
         
         for instance in X:
             # Calculate the disjunct class percentages for the instances
-            disjunct_class_diversities.append(self.get_leaf_diversity(self.decision_tree, instance))
+            disjunct_class_diversities.append(self._get_leaf_diversity(self.decision_tree, instance))
 
         return disjunct_class_diversities
     
-    def get_leaf_percentage(self, node, instance, instance_class):
+    def _get_leaf_percentage(self, node, instance, instance_class):
         """
         Recursively determine the percentages of instances in a leaf node with the same class label of a given instance in the decision tree structure.
 
@@ -310,15 +311,15 @@ class DisjunctClass:
             feature_name = node["decision"]["feature_name"]
             threshold = node["decision"]["threshold"]
             if instance[feature_name] <= threshold:
-                return self.get_leaf_percentage(node["left"], instance, instance_class)
+                return self._get_leaf_percentage(node["left"], instance, instance_class)
             else:
-                return self.get_leaf_percentage(node["right"], instance, instance_class)
+                return self._get_leaf_percentage(node["right"], instance, instance_class)
         else:
             # If the node is a leaf, return its disjunct class percentage
             return node["instances_by_class"][instance_class]/node["instances_count"]
 
     
-    def get_leaf_diversity(self, node, instance):
+    def _get_leaf_diversity(self, node, instance):
         """
         Recursively determine the diversity of instances in a leaf node a given instance in the decision tree structure.
 
@@ -334,9 +335,9 @@ class DisjunctClass:
             feature_name = node["decision"]["feature_name"]
             threshold = node["decision"]["threshold"]
             if instance[feature_name] <= threshold:
-                return self.get_leaf_diversity(node["left"], instance)
+                return self._get_leaf_diversity(node["left"], instance)
             else:
-                return self.get_leaf_diversity(node["right"], instance)
+                return self._get_leaf_diversity(node["right"], instance)
         else:
             # If the node is a leaf, return its diversity
             node_labels = [x for x, count in enumerate(node["instances_by_class"].values()) for _ in range(count)]
@@ -355,8 +356,8 @@ class KNeighbors:
     - fit(self, X, y, n_neighbors=5): Fits a k-Nearest Neighbors classifier to the training data.
     - calculate_disagreement(self, X, y): Calculates the disagreeing neighbors percentage for a set of instances.
     - calculate_diversity(self, X, y): Calculates the diverse neighbors score for a set of instances.
-    - get_disagreeing_neighbors_percentage(self, instance, instance_class): Calculates the disagreeing neighbors percentage for a single instance.
-    - get_diverse_neighbors_score(self, instance): Calculates the diverse neighbors score for a single instance.
+    - _get_disagreeing_neighbors_percentage(self, instance, instance_class): Calculates the disagreeing neighbors percentage for a single instance.
+    - _get_diverse_neighbors_score(self, instance): Calculates the diverse neighbors score for a single instance.
     
     Example usage:
     >>> KNeigh = KNeighbors()
@@ -400,7 +401,7 @@ class KNeighbors:
 
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X.reshape(1, -1)
+            X = X.reshape(1, -1)
         
         # Fit a NearestNeighbours algorithm to X
         nn = KNeighborsClassifier(n_neighbors=n_neighbors)
@@ -428,14 +429,14 @@ class KNeighbors:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X.reshape(1, -1)
+            X = X.reshape(1, -1)
 
         # Initialize a list to store the disagreeing neighbors scores for new instances
         disagreeing_neighbors = []
         
         for instance, instance_class in zip(X, y):
             # Calculate the disagreeing neighbors scores for the instances
-            disagreeing_neighbors.append(self.get_disagreeing_neighbors_percentage(instance.reshape(1, -1), instance_class))
+            disagreeing_neighbors.append(self._get_disagreeing_neighbors_percentage(instance.reshape(1, -1), instance_class))
 
         return disagreeing_neighbors
     
@@ -461,18 +462,18 @@ class KNeighbors:
         
         # Ensure X is 2-dimensional in shape
         if X.ndim == 1:
-            X.reshape(1, -1)
+            X = X.reshape(1, -1)
 
         # Initialize a list to store the diverse neighbors scores for new instances
         diverse_neighbors = []
         
         for instance in X:
             # Calculate the diverse neighbors scores for the instances
-            diverse_neighbors.append(self.get_diverse_neighbors_score(instance.reshape(1, -1)))
+            diverse_neighbors.append(self._get_diverse_neighbors_score(instance.reshape(1, -1)))
 
         return diverse_neighbors
     
-    def get_disagreeing_neighbors_percentage(self, instance, instance_class):
+    def _get_disagreeing_neighbors_percentage(self, instance, instance_class):
         """
         Calculate the disagreeing neighbors percentage for a single instance.
 
@@ -495,7 +496,7 @@ class KNeighbors:
         
         return percentage
     
-    def get_diverse_neighbors_score(self, instance):
+    def _get_diverse_neighbors_score(self, instance):
         """
         Calculate the diverse neighbors score for a single instance.
 
@@ -530,11 +531,11 @@ class ClassLikelihood:
     - fit(X, y, categorical_idx=[]): Fit the class likelihood model to the provided dataset.
     - calculate_class_likelihood_difference(X, y): Calculate class likelihood differences for a list of new instances based on the training set statistics.
     - calculate_evidence_conflict(X, return_evidence_volume=False): Calculate evidence conflict for a list of new instances based on the training set statistics.
-    - class_stats(X, y, categorical_idx): Compute statistics for the training dataset, including class counts and feature statistics.
-    - class_likelihood(instance, target_class): Calculate the class likelihood for a given instance and a specific target class.
-    - class_likelihood_difference(instance, instance_class): Calculate the class likelihood difference for a given instance and its actual class.
-    - evidence_conflict(instance, return_evidence_volume=False): Calculate evidence conflict for a given instance.
-    - evidence_volume(instance, target_class): Calculate evidence volume for an instance belonging to a certain class.
+    - _class_stats(X, y, categorical_idx): Compute statistics for the training dataset, including class counts and feature statistics.
+    - _class_likelihood(instance, target_class): Calculate the class likelihood for a given instance and a specific target class.
+    - _class_likelihood_difference(instance, instance_class): Calculate the class likelihood difference for a given instance and its actual class.
+    - _evidence_conflict(instance, return_evidence_volume=False): Calculate evidence conflict for a given instance.
+    - _evidence_volume(instance, target_class): Calculate evidence volume for an instance belonging to a certain class.
 
     Example Usage:
     >>> clf = ClassLikelihood()
@@ -563,7 +564,7 @@ class ClassLikelihood:
             raise ValueError("X and y must have the same number of instances.")
         
         # Store the data description in a dictionary format
-        self.data = self.class_stats(X, y, categorical_idx)
+        self.data = self._class_stats(X, y, categorical_idx)
         self.classes = np.unique(y)
 
     def calculate_class_likelihood_difference(self, X, y):
@@ -595,7 +596,7 @@ class ClassLikelihood:
         
         for instance, instance_class in zip(X, y):
             # Calculate the likelihood differences for the instances
-            likelihood_difference.append(self.class_likelihood_difference(instance, instance_class))
+            likelihood_difference.append(self._class_likelihood_difference(instance, instance_class))
 
         return likelihood_difference
     
@@ -628,7 +629,7 @@ class ClassLikelihood:
 
         for instance in X:
             # Calculate evidence conflict for the current instance
-            ec, ev = self.evidence_conflict(instance)
+            ec, ev = self._evidence_conflict(instance)
             
             # Append evidence conflict and volume to the list
             evidence_conflict.append(ec)
@@ -639,7 +640,7 @@ class ClassLikelihood:
         else:
             return evidence_conflict
     
-    def class_stats(self, X, y, categorical_idx):
+    def _class_stats(self, X, y, categorical_idx):
         """
         Calculate class-specific statistics for features in the input data.
 
@@ -707,7 +708,7 @@ class ClassLikelihood:
 
         return class_dict
     
-    def class_likelihood(self, instance, target_class):
+    def _class_likelihood(self, instance, target_class):
         """
         Calculate the class likelihood for an instance belonging to a certain class.
 
@@ -733,7 +734,7 @@ class ClassLikelihood:
 
         return likelihood
     
-    def class_likelihood_difference(self, instance, instance_class):
+    def _class_likelihood_difference(self, instance, instance_class):
         """
         Calculate the class likelihood difference for an instance belonging to a certain class.
 
@@ -745,17 +746,17 @@ class ClassLikelihood:
         float: The class likelihood difference for the given instance and class.
         """
         # Calculate class likelihood for the instance's actual class
-        likelihood_actual = self.class_likelihood(instance, instance_class)
+        likelihood_actual = self._class_likelihood(instance, instance_class)
         
         # Calculate class likelihood for all other classes
-        likelihood_other = [self.class_likelihood(instance, class_label) for class_label in self.classes if class_label != instance_class]
+        likelihood_other = [self._class_likelihood(instance, class_label) for class_label in self.classes if class_label != instance_class]
 
         # Calculate the difference between the actual class likelihood and the maximum likelihood of other classes
         likelihood_difference = likelihood_actual - max(likelihood_other)
         
         return likelihood_difference
 
-    def evidence_conflict(self, instance):
+    def _evidence_conflict(self, instance):
         """
         Calculate evidence conflict for a given instance.
 
@@ -769,14 +770,14 @@ class ClassLikelihood:
         """
 
         # Calculate evidence volume for each class
-        evidence_volume_per_class = [self.evidence_volume(instance, class_label) for class_label in self.classes]
+        evidence_volume_per_class = [self._evidence_volume(instance, class_label) for class_label in self.classes]
 
         # Find the maximum evidence volume among classes
         evidence_volume = max(evidence_volume_per_class)
 
         # Calculate the total evidence across all classes
         total_evidence = sum(evidence_volume_per_class)
-
+        
         # Calculate the percentage share of evidence volume for each class
         evidence_share_per_class = [int((ev / total_evidence) * 100) for ev in evidence_volume_per_class]
 
@@ -788,7 +789,7 @@ class ClassLikelihood:
 
         return evidence_conflict, evidence_volume
 
-    def evidence_volume(self, instance, target_class):
+    def _evidence_volume(self, instance, target_class):
         """
         Calculate evidence volume for an instance belonging to a certain class.
 
@@ -820,3 +821,249 @@ class ClassLikelihood:
                 evidence *= (self.data[idx]['counts'][target_class][instance[idx]] / class_total) * feature['importance']
 
         return evidence
+    
+
+class RDOS:
+    """
+    RDOS (Relative Density Outlier Score) is a class for calculating the outlierness of an instance using relative density-based methods.
+    
+    Parameters:
+    n_neighbors (int, optional): The number of neighbors to consider for density estimation. Default is 10.
+    h (float, optional): The smoothing parameter for the Gaussian kernel used in density estimation. Default is 1.
+    
+    Attributes:
+    n_neighbors (int): The number of neighbors to consider for density estimation.
+    h (float): The smoothing parameter for the Gaussian kernel.
+    X_train (numpy.ndarray): The training data used to fit the model.
+    nearest_neighbors (NearestNeighbors): The NearestNeighbors model trained on the training data.
+    training_neighborhood (dict): Neighborhood information for each data point in the training set.
+    distance_matrix (numpy.ndarray): The distance matrix between data points in the training set.
+    training_rdos (dict): Relative Density-based Outlier Scores (rdos) for data points in the training set.
+    scaler (MinMaxScaler): A MinMaxScaler fitted to the training rdos values for scaling.
+    
+    Methods:
+    fit(X): Fit the model with training data and perform necessary preprocessing. 
+    calculate(X): Calculate the scaled relative density outlier score for a given instance or set of instances. 
+    _get_training_neighborhood(nbrs, dists): Create the neighborhood dictionary for each data point in the training set based on nearest neighbors and distance information.
+    _get_testing_neighborhood(X, nbrs): Create the neighborhood dictionary for each new instance in the set based on nearest neighbors and distance information from the training.
+    _calculate_rdos(dictionary): Calculate Relative Density Outlier Scores (rdos) for each instance in the input dictionary.
+
+    Example Usage:
+    >>> rdos = RDOS()
+    >>> rdos.fit(X_train)
+    >>> outlierness = rdos.calculate(X_test)
+    """
+    def __init__(self, n_neighbors = 10, h = 1):
+        
+        if not isinstance(n_neighbors, int):
+            raise TypeError("n_neighbors should be an integer")
+
+        self.n_neighbors = n_neighbors
+        self.h = h
+        self.X_train = None
+        self.nearest_neighbors = None
+        self.training_neighbourhood = None
+        self.distance_matrix = None
+        self.training_rdos = None
+        self.scaler = None
+
+    def fit(self, X):
+        """
+        Fit the model with training data and perform necessary preprocessing.
+
+        Parameters:
+        X (array-like or DataFrame): The training data, where each row represents a data point.
+
+        Raises:
+        TypeError: If X is not a NumPy array or compatible data structure.
+        ValueError: If X is not a 2D array.
+        """
+        # Check if X is a Pandas DataFrame, and convert it to a NumPy array if needed
+        if isinstance(X, pd.DataFrame):
+            X = X.to_numpy()
+
+        # Check if X is a NumPy array or a compatible data structure
+        if not isinstance(X, np.ndarray):
+            raise TypeError("X should be a NumPy array")
+
+        # Set the training data for the instance
+        self.X_train = X
+
+        # Check if X is a 2D array
+        if X.ndim != 2:
+            raise ValueError("X should be a 2D array")
+        
+        # Set the training data for the instance
+        self.X_train = X
+        
+        # Calculate the distance matrix between the data points in X
+        self.distance_matrix = distance.cdist(X, X)
+        
+        # Initialize a NearestNeighbors object with a specified number of neighbors
+        NN = NearestNeighbors(n_neighbors=self.n_neighbors)
+        
+        # Fit the NearestNeighbors model with the training data X
+        self.nearest_neighbors = NN.fit(X)
+
+        # Calculate the distances and indices of the k-nearest neighbors for each data point in X
+        dists, nbrs = self.nearest_neighbors.kneighbors(X, n_neighbors=self.n_neighbors+1)
+        
+        # Exclude the first neighbor
+        nbrs = nbrs[:, 1:]
+        dists = dists[:, 1:]
+
+        # Get the training neighborhood using the calculated neighbor indices and distances
+        self.training_neighborhood = self._get_training_neighborhood(nbrs, dists)
+        
+        # Calculate the relative distances of the training neighborhood
+        self.training_neighborhood = self._calculate_rdos(self.training_neighborhood)
+        
+        # Initialize a MinMaxScaler and fit it to the relative distances of the training neighborhood
+        self.scaler = MinMaxScaler().fit(
+            np.array([v['rdos'] for v in self.training_neighborhood.values()]).reshape(-1, 1)
+        )
+
+    def calculate(self, X):
+        """
+        Calculate the scaled relative distances (rdos) for a given data point or set of data points.
+
+        Parameters:
+        X (array-like or DataFrame): The data point(s) for which to calculate rdos.
+
+        Returns:
+        list: A list of scaled relative distances (rdos) for the input data point(s).
+        """
+        # Ensure X is 2-dimensional in shape
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+        
+        # Find the indices of the k-nearest neighbors of the input data X
+        _, nbrs = self.nearest_neighbors.kneighbors(X, n_neighbors=self.n_neighbors)
+        
+        # Get the testing neighborhood using the neighbor indices
+        test_neighborhood = self._get_testing_neighborhood(X, nbrs)
+        
+        # Calculate the relative density outlier score for the test neighborhood
+        rdos = [self.scaler.transform(np.array(v['rdos']).reshape(-1, 1))[0][0] for v in self._calculate_rdos(test_neighborhood).values()]
+        
+        return rdos
+
+
+    def _get_training_neighborhood(self, nbrs, dists):
+        """
+        Create the neighborhood dictionary for each data point in the training set based on nearest neighbors and distance information.
+
+        Parameters:
+        nbrs (numpy.ndarray): A 2D array where each row contains indices of k-nearest neighbors for a data point.
+        dists (numpy.ndarray): A 2D array where each row contains distances to k-nearest neighbors.
+
+        Returns:
+        dict: A dictionary where each key represents a data point's index and the corresponding value is a dictionary
+            containing information about its neighborhood.
+        """
+        # Initialize dictionaries to store neighborhood information
+        shared_neighbors = {}
+        reverse_neighbors = {}
+        neighborhood = {}
+        px = {}
+
+        # Create a set for each data point's neighbors
+        nbrs_set = [set(nbrs[i, :]) for i in range(nbrs.shape[0])]
+
+        for idx in range(nbrs.shape[0]):
+            # Calculate shared neighbors (common neighbors with other data points)
+            shared_neighbors[idx] = [i for i, s in enumerate(nbrs_set) if (idx != i) and (s.intersection(nbrs_set[idx]))]
+            # Calculate reverse neighbors (data points that have the current point as a neighbor)
+            reverse_neighbors[idx] = [i for i, s in enumerate(nbrs_set) if (idx != i) and (idx in s)]
+            # Combine neighbors, shared neighbors, and reverse neighbors to form the neighborhood
+            neighborhood[idx] = list(nbrs_set[idx] | set(shared_neighbors[idx]) | set(reverse_neighbors[idx]))
+
+            # Calculate the Gaussian kernel density estimation ('px') for the current data point
+            Kgaussian = 1 / ((2 * np.pi) ** (self.X_train.shape[1] / 2)) * np.exp(-((self.distance_matrix[idx, neighborhood[idx]]) / (2 * self.h ** 2)))
+            px[idx] = (1 / (len(neighborhood[idx]) + 1)) * np.sum((1 / (self.h ** self.X_train.shape[1])) * Kgaussian)
+
+        # Create a dictionary to store neighborhood information for all data points
+        neighbourhoods = {
+            idx: {
+                'nbrs': nbrs[idx, :],
+                'cut-off_dist': dists[idx, -1],
+                'shared_neighbors': shared_neighbors[idx],
+                'reverse_neighbors': reverse_neighbors[idx],
+                'neighborhood': neighborhood[idx],
+                'px': px[idx]
+            }
+            for idx in range(nbrs.shape[0])
+        }
+
+        return neighbourhoods
+    
+
+    def _get_testing_neighborhood(self, X, nbrs):
+        """
+        Create the neighborhood dictionary for each new data point in the set based on nearest neighbors and distance information from the training.
+
+        Parameters:
+        nbrs (numpy.ndarray): A 2D array where each row contains indices of k-nearest neighbors for a data point.
+        dists (numpy.ndarray): A 2D array where each row contains distances to k-nearest neighbors.
+
+        Returns:
+        dict: A dictionary where each key represents a data point's index and the corresponding value is a dictionary
+            containing information about its neighborhood.
+        """
+        # Initialize dictionaries to store neighborhood information
+        shared_neighbors = {}
+        reverse_neighbors = {}
+        neighborhood = {}
+        px = {}
+
+        # Create a set for each instance's neighbors and get the training instances neighbours and max_dist values
+        nbrs_set = [set(nbrs[i, :]) for i in range(X.shape[0])]
+        training_nbrs_set = [set(v['nbrs']) for v in self.training_neighborhood.values()]
+        max_dist = [v['cut-off_dist'] for v in self.training_neighborhood.values()]
+
+        for idx in range(nbrs.shape[0]):
+            # Calculate shared neighbors (common neighbors with other data points)
+            shared_neighbors[idx] = [i for i, s in enumerate(training_nbrs_set) if s.intersection(nbrs_set[idx])]
+           
+            # Calculate distance of the current instance from each instance in the training set
+            dist_mat = distance.cdist(X[[idx],:], self.X_train)[0]
+            
+            # Calculate reverse neighbors (data points that have the current point as a neighbor)
+            reverse_neighbors[idx] = [i for i, d in enumerate(zip(dist_mat, max_dist)) if d[0] < d[1]]
+            neighborhood[idx] = list(nbrs_set[idx] | set(shared_neighbors[idx]) | set(reverse_neighbors[idx]))
+            
+            # Calculate the Gaussian kernel density estimation ('px') for the current data point
+            Kgaussian = 1 / ((2 * np.pi) ** (self.X_train.shape[1] / 2)) * np.exp(-((dist_mat[neighborhood[idx]]) / (2 * self.h ** 2)))
+            px[idx] = (1 / (len(neighborhood[idx]) + 1)) * np.sum((1 / (self.h ** self.X_train.shape[1])) * Kgaussian)
+
+        # Create a dictionary to store neighborhood information for all data points
+        neighbourhoods = {
+            idx: {
+                'nbrs': nbrs[idx, :],
+                'shared_neighbors': shared_neighbors[idx],
+                'reverse_neighbors': reverse_neighbors[idx],
+                'neighborhood': neighborhood[idx],
+                'px': px[idx]
+            }
+            for idx in range(X.shape[0])
+        }
+
+        return neighbourhoods
+
+
+    def _calculate_rdos(self, dictionary):
+        """
+        Calculate Relative Distance-based Outlier Scores (rdos) for each data point in the input dictionary.
+
+        Parameters:
+        dictionary (dict): A dictionary containing neighborhood information for data points.
+
+        Returns:
+        dict: A modified version of the input dictionary with 'rdos' values calculated for each data point.
+        """
+        for v in dictionary.values():
+            # Calculate rdos for each data point in the neighborhood
+            rdos = sum([self.training_neighborhood[idx]['px'] for idx in v['neighborhood']]) / (len(v['neighborhood']) * v['px'])
+            v['rdos'] = rdos
+
+        return dictionary
