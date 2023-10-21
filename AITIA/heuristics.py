@@ -1,12 +1,14 @@
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.neighbors import KNeighborsClassifier, NearestNeighbors
-from AITIA.utils import extract_decision_tree, diversity_degree
-from sklearn.feature_selection import mutual_info_classif
-from sklearn.preprocessing import MinMaxScaler
-from scipy.stats import norm
-from scipy.spatial import distance
 import numpy as np
 import pandas as pd
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier, NearestNeighbors
+from sklearn import svm
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.feature_selection import mutual_info_classif
+from scipy.spatial import distance
+from scipy.stats import norm
+from itertools import combinations
+from AITIA.utils import extract_decision_tree, diversity_degree
 
 class DisjunctSize:
     """
@@ -923,12 +925,13 @@ class RDOS:
             np.array([v['rdos'] for v in self.training_neighborhood.values()]).reshape(-1, 1)
         )
 
-    def calculate(self, X):
+    def calculate(self, X, transform = True):
         """
         Calculate the scaled relative distances (rdos) for a given data point or set of data points.
 
         Parameters:
         X (array-like or DataFrame): The data point(s) for which to calculate rdos.
+        transform (bool): Whether to MinMaxScale the scores. Default is True.
 
         Returns:
         list: A list of scaled relative distances (rdos) for the input data point(s).
@@ -944,7 +947,10 @@ class RDOS:
         test_neighborhood = self._get_testing_neighborhood(X, nbrs)
         
         # Calculate the relative density outlier score for the test neighborhood
-        rdos = [self.scaler.transform(np.array(v['rdos']).reshape(-1, 1))[0][0] for v in self._calculate_rdos(test_neighborhood).values()]
+        if transform:
+            rdos = [self.scaler.transform(np.array(v['rdos']).reshape(-1, 1))[0][0] for v in self._calculate_rdos(test_neighborhood).values()]
+        else:
+            rdos = [v['rdos'] for v in self._calculate_rdos(test_neighborhood).values()]
         
         return rdos
 
@@ -1067,3 +1073,206 @@ class RDOS:
             v['rdos'] = rdos
 
         return dictionary
+    
+
+class ClassLevelRDOS:
+    """
+    Class for calculating outlierness diversity based on Class-Level RDOS.
+
+    Attributes:
+    n_neighbors (int): Number of neighbors for RDOS calculation.
+    h (float): A parameter 'h' for RDOS calculation.
+    rdos_calculators (dict): A dictionary to store RDOS calculators for each class.
+
+    Methods:
+    - fit(X, y): Fit the ClassLevelRDOS model with training data.
+    - calculate(X): Calculate outlierness diversity for input data.
+    Example Usage:
+    >>> cl_rdos = ClassLevelRDOS()
+    >>> cl_rdos.fit(X_train, y_train)
+    >>> class_level_rdos_scores = cl_rdos.calculate(X_test)
+    """
+    def __init__(self, n_neighbors=10, h=1):
+        self.n_neighbors = n_neighbors
+        self.h = h
+        self.rdos_calculators = None
+
+    def fit(self, X, y):
+        """
+        Fit the an RDOS class for each class in the training data.
+
+        Parameters:
+        - X (array-like or DataFrame): Training data with features.
+        - y (array-like): Training data labels.
+        """
+        # Check if X is a Pandas DataFrame, and convert it to a NumPy array if needed
+        if isinstance(X, pd.DataFrame):
+            X = X.to_numpy()
+
+        # Check if X is a NumPy array or a compatible data structure
+        if not isinstance(X, np.ndarray):
+            raise TypeError("X should be a NumPy array")
+        
+        # Check if X is a 2D array
+        if X.ndim != 2:
+            raise ValueError("X should be a 2D array")
+        
+        # Initialize a dictionary to hold RDOS calculators for each class
+        rdos_classes = {}
+
+        for class_id, _ in enumerate(np.unique(y)):
+            # Create an RDOS calculator for the class with specified parameters
+            rdos_classes[class_id] = RDOS(n_neighbors=self.n_neighbors, h=self.h)
+            # Fit the RDOS calculator with instances belonging to the current class
+            rdos_classes[class_id].fit(X[y == class_id, :])
+
+        # Store the RDOS calculators in the class instance
+        self.rdos_calculators = rdos_classes
+
+    def calculate(self, X):
+        """
+        Calculate outlierness diversity for input data.
+
+        Parameters:
+        - X (array-like or DataFrame): Input data with features.
+
+        Returns:
+        - outlierness_diversity (list): A list of outlierness diversity values for each data point in 'X'.
+        """
+        # Ensure X is 2-dimensional in shape
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+
+        scores = []
+        # Calculate RDOS scores for each class and store them in 'scores'
+        for v in self.rdos_calculators.values():
+            scores.append(v.calculate(X, transform=True))
+
+        outlierness_diversity = []
+        for idx in range(X.shape[0]): 
+            # Calculate the total outlierness for the point
+            total_outlierness = sum([score[idx] for score in scores]) 
+            
+            # Calculate the percentage share of outlierness for each class
+            outlierness_share_per_class = [int((score[idx] / total_outlierness) * 100) for score in scores]
+
+            # Create a list of outlierness labels based on the percentage share
+            evidence_labels = [x for x, count in enumerate(outlierness_share_per_class) for _ in range(count)]
+
+            # Calculate outlierness diversity using diversity degree
+            outlierness_diversity.append(diversity_degree(evidence_labels, len(self.rdos_calculators.keys())))
+
+        return outlierness_diversity
+    
+
+class HyperplaneDistance:
+    """
+    A class for fitting Support Vector Machine (SVM) models for OVO classification and calculating normalized
+    minimum distances of instances from a decision boundary.
+
+    Attributes:
+    kernel (str): The kernel function used for SVM models (default is 'linear').
+    class_weight (dict or None): Class weights for the SVM models (default is None).
+    svms (dict): A dictionary containing trained SVM models for different class combinations.
+    scaler (MinMaxScaler): A MinMaxScaler used to normalize the distances.
+
+    Methods:
+    - fit(X, y): Fit SVM models to the input data for binary classification and calculate normalized distances.
+    - calculate(X): Calculate normalized distances of instances from SVM decision boundaries.
+    - _get_distances(X): Helper method to calculate distances from decision boundaries.
+
+    Example Usage:
+    >>> clf = HyperplaneDistance(kernel='linear', class_weight={0: 1, 1: 2})
+    >>> clf.fit(X_train, y_train)
+    >>> distances = clf.calculate(X_test)
+
+    """
+
+    def __init__(self, kernel = 'linear', class_weight = None):
+        self.class_weight = class_weight
+        self.kernel = kernel
+        self.svms = None
+        self.scaler = None
+
+    def fit(self, X, y):
+        """
+        Fit SVM models to the input data for binary OVO classification.
+
+        Parameters:
+        X (array-like): The input feature data. It can be a Pandas DataFrame or a NumPy array.
+        y (array-like): The target labels for binary classification.
+
+        Raises:
+        TypeError: If X is not a NumPy array or a compatible data structure.
+        ValueError: If X is not a 2D array.
+        """
+        # Check if X is a Pandas DataFrame, and convert it to a NumPy array if needed.
+        if isinstance(X, pd.DataFrame):
+            X = X.to_numpy()
+
+        # Check if X is a NumPy array or a compatible data structure.
+        if not isinstance(X, np.ndarray):
+            raise TypeError("X should be a NumPy array")
+
+        # Check if X is a 2D array.
+        if X.ndim != 2:
+            raise ValueError("X should be a 2D array")
+
+        # Initialize a dictionary to hold SVMs for each class.
+        svm_combos = {}
+        c = list(combinations(np.unique(y), 2))
+
+        for class_id, c in enumerate(c):
+            idx = np.where((y == c[0]) | (y == c[1]))[0]
+
+            # Create an SVM model with the specified kernel and class weight.
+            svm_combos[class_id] = svm.SVC(kernel=self.kernel, class_weight=self.class_weight)
+            
+            # Fit the SVM model to the instances corresponding to the current class combination.
+            svm_combos[class_id].fit(X[idx, :], y[idx])
+
+        self.svms = svm_combos  # Store the trained SVMs
+
+        # Calculate distances from decision boundaries for training data.
+        training_distances = self._get_distances(X)
+
+        # Create and fit a MinMaxScaler to normalize the distances.
+        self.scaler = MinMaxScaler().fit(training_distances.reshape(-1, 1))
+
+    def calculate(self, X):
+        """
+        Calculate normalized distances of instances from SVM decision boundaries.
+
+        Parameters:
+        X (array-like): The input feature data for which distances are to be calculated. It should be a 2D array.
+
+        Returns:
+        distances (list): A list of normalized distances for each instance.
+        """
+        # Ensure X is 2-dimensional in shape
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+        
+        # Calculate distances from the decision boundaries of SVM models.
+        distances = self._get_distances(X)
+
+        # Calculate the decision function for the input data and normalize using the previously fitted MinMaxScaler and return them as a list.
+        return list(self.scaler.transform(distances.reshape(-1, 1)).flatten())
+
+    def _get_distances(self, X):
+        """
+        Calculate the minimum normalized distances of instances from SVM decision boundaries.
+
+        Parameters:
+        X (array-like): The input feature data for which distances are to be calculated.
+
+        Returns:
+        distances (array): An array of minimum normalized distances for each instance.
+        """
+        scores = []
+        for v in self.svms.values():
+            # Normalize the decision function by dividing it by the L2 norm of the SVM coefficients.
+            scores.append(v.decision_function(X)/np.linalg.norm(v.coef_))
+
+        # Stack the scores vertically and find the minimum value along each column (instance).
+        return np.min(np.vstack(scores),axis=0)
