@@ -176,11 +176,13 @@ class DisjunctClass:
     >>> diversity = disjunct_size.calculate_diversity(X_test)
     """
 
-    def __init__(self):
+    def __init__(self, max_depth=4, balanced=False):
         self.decision_tree = None
         self.n_classes = None
+        self.max_depth = max_depth
+        self.balanced = balanced
 
-    def fit(self, X, y, max_depth=4, balanced=False):
+    def fit(self, X, y):
         """
         Fit a DecisionTreeClassifier to the provided dataset and extract its structure.
         
@@ -218,10 +220,10 @@ class DisjunctClass:
         X = X.astype(np.float32)
         
         # Create and train a DecisionTreeClassifier balancing the class weights if specified
-        if balanced:
-            clf = DecisionTreeClassifier(max_depth=max_depth, class_weight='balanced')
+        if self.balanced:
+            clf = DecisionTreeClassifier(max_depth=self.max_depth, class_weight='balanced')
         else:
-            clf = DecisionTreeClassifier(max_depth=max_depth)
+            clf = DecisionTreeClassifier(max_depth=self.max_depth)
         clf.fit(X, y)
 
         # Extract and store the decision tree in a dictionary format
@@ -367,11 +369,11 @@ class KNeighbors:
     >>> kdn_score = KNeigh.calculate_disagreement(X_test, y_test)
     >>> kdivn_score = KNeigh.calculate_diversity(X_test)
     """
-    def __init__(self):
+    def __init__(self, n_neighbors):
         self.y = None
-        self.n_neighbors = None
+        self.n_neighbors = n_neighbors
 
-    def fit(self, X, y, n_neighbors=5):
+    def fit(self, X, y):
         """
         Fit a KNeighborsClassifier to the provided dataset.
         
@@ -406,7 +408,7 @@ class KNeighbors:
             X = X.reshape(1, -1)
         
         # Fit a NearestNeighbours algorithm to X
-        nn = KNeighborsClassifier(n_neighbors=n_neighbors)
+        nn = KNeighborsClassifier(n_neighbors=self.n_neighbors)
         self.nearest_neighbors = nn.fit(X, y)
 
     def calculate_disagreement(self, X, y):
@@ -1172,7 +1174,7 @@ class HyperplaneDistance:
 
     Attributes:
     kernel (str): The kernel function used for SVM models (default is 'linear').
-    class_weight (dict or None): Class weights for the SVM models (default is None).
+    class_weight (bool): Whether to balance the class weights for the SVM models (default is False).
     svms (dict): A dictionary containing trained SVM models for different class combinations.
     scaler (MinMaxScaler): A MinMaxScaler used to normalize the distances.
 
@@ -1182,14 +1184,14 @@ class HyperplaneDistance:
     - _get_distances(X): Helper method to calculate distances from decision boundaries.
 
     Example Usage:
-    >>> clf = HyperplaneDistance(kernel='linear', class_weight={0: 1, 1: 2})
+    >>> clf = HyperplaneDistance(kernel='linear', balanced=True)
     >>> clf.fit(X_train, y_train)
     >>> distances = clf.calculate(X_test)
 
     """
 
-    def __init__(self, kernel = 'linear', class_weight = None):
-        self.class_weight = class_weight
+    def __init__(self, kernel = 'linear', balanced = False):
+        self.balanced = balanced
         self.kernel = kernel
         self.svms = None
         self.scaler = None
@@ -1226,7 +1228,11 @@ class HyperplaneDistance:
             idx = np.where((y == c[0]) | (y == c[1]))[0]
 
             # Create an SVM model with the specified kernel and class weight.
-            svm_combos[class_id] = svm.SVC(kernel=self.kernel, class_weight=self.class_weight)
+            if self.balanced:
+                svm_combos[class_id] = svm.SVC(kernel=self.kernel, class_weight='balanced')
+            else:
+                svm_combos[class_id] = svm.SVC(kernel=self.kernel)
+
             
             # Fit the SVM model to the instances corresponding to the current class combination.
             svm_combos[class_id].fit(X[idx, :], y[idx])
@@ -1276,3 +1282,34 @@ class HyperplaneDistance:
 
         # Stack the scores vertically and find the minimum value along each column (instance).
         return np.min(np.vstack(scores),axis=0)
+
+class HeursiticsCalculator:
+
+    def __init__(self, kneighbors_n=5, max_depth=4, balanced=False, rdos_neighbors=5):
+        self.KDN = KNeighbors(n_neighbors=kneighbors_n)
+        self.DS = DisjunctSize()
+        self.DCD = DisjunctClass(max_depth=max_depth, balanced=balanced)
+        self.HD = HyperplaneDistance(balanced=balanced)
+        self.OL = RDOS(n_neighbors=rdos_neighbors)
+        self.CL_OL = ClassLevelRDOS(n_neighbors=rdos_neighbors)
+        self.EC = ClassLikelihood()
+
+    def fit(self,X,y):
+        self.KDN.fit(X,y)
+        self.DS.fit(X,y)
+        self.DCD.fit(X,y)
+        self.HD.fit(X,y)
+        self.OL.fit(X)
+        self.CL_OL.fit(X,y)
+        self.EC.fit(X,y)
+
+    def calculate(self,X):
+        KDN_score = self.KDN.calculate_diversity(X)
+        DS_score = self.DS.calculate(X)
+        DCD_score = self.DCD.calculate_diversity(X)
+        HD_score = self.HD.calculate(X)
+        OL_score = self.OL.calculate(X)
+        CL_OL_score = self.CL_OL.calculate(X)
+        EC_score = self.EC.calculate_evidence_conflict(X)
+
+        return np.transpose(np.vstack((KDN_score, DS_score, DCD_score, HD_score, OL_score, CL_OL_score, EC_score)))
