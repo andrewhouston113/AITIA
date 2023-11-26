@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.model_selection import StratifiedKFold
 
 def extract_decision_tree(tree, X, y, node=0, depth=0):
         """
@@ -92,3 +93,29 @@ def diversity_degree(data, n_classes):
     else:
         # If LRID is not 0, compute diversity degree between 0 and 1
         return 1 - (LRID / null_diversity_LRID)
+
+def generate_points_around_x(f1_score, n1_score, n_datasets, max_distance):
+    """
+    Generate a series of points around the central point (F1, N1).
+
+    Parameters:
+    - F1: Float representing the central point along the F1 axis.
+    - N1: Float representing the central point along the N1 axis.
+    - num_points: Number of points to generate.
+    - max_distance: Maximum distance from the central point.
+
+    Returns:
+    - Array of generated points.
+    """
+    mean = np.array([f1_score, n1_score])
+    cov_matrix = np.eye(2)  # Identity matrix as the covariance matrix
+
+    # Generate points using a 2D Gaussian distribution
+    points = np.random.multivariate_normal(mean, cov_matrix, n_datasets)
+
+    # Scale the points based on the maximum distance
+    scaled_points = (max_distance * (points - np.mean(points, axis=0)) / np.max(np.abs(points - np.mean(points, axis=0)), axis=0))+mean
+
+    scaled_points = np.clip(scaled_points, 0, 1)
+
+    return scaled_points
