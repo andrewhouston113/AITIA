@@ -16,13 +16,15 @@ from sklearn.metrics import (
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from zepid.graphics import EffectMeasurePlot
-from AITIA.heuristics import KNeighbors, DisjunctSize, DisjunctClass, ClassLikelihood, HeursiticsCalculator
+from AITIA.heuristics import KNeighbors, DisjunctSize, DisjunctClass, ClassLikelihood
 from AITIA.utils import generate_points_around_x
 from AITIA.syboid import SyBoid
 from AITIA.complexity_measures import F1, N1
-import skfuzzy as fuzz
+from AITIA.uncertainty_system import MetaUncertaintyEstimator
 import itertools
 import random
+import pandas as pd
+import seaborn as sns
 
 
 class MisclassificationExplainer:
@@ -556,153 +558,286 @@ def derive_abstention_threshold(X, y, uncertainty_estimator, scoring='roc_auc', 
 
     return mean_optimal_threshold
 
-def calculate_shapley_value(X_train, f, x, j, M=100):
+class UncertaintyExplainer:
     """
-    Calculate the Shapley value for a specific feature j using a random subset of other features.
+    UncertaintyExplainer is a class for explaining model uncertainty using SHAP values.
 
     Parameters:
-    - X_train (np.ndarray): Training dataset used to sample instances.
-    - f: Uncertainty Explaination object
-    - x (np.ndarray): Instance(s) for which the Shapley value is calculated.
-    - j (int): Index of the feature for which the Shapley value is calculated.
-    - M (int): Number of iterations to estimate the Shapley value (default is 100).
-
-    Returns:
-    - float: Shapley value for the specified feature.
-    """
-    # Check if x has the correct shape
-    if x.shape[0] != 1:
-        raise ValueError("Input instance x must have shape (1, n).")
-
-    # Get the number of features in the instance x
-    n_features = x.shape[1]
-    
-    # Initialize an empty list to store marginal contributions
-    marginal_contributions = []
-    
-    # Create a list of feature indices, excluding the feature of interest (j)
-    feature_idxs = list(range(n_features))
-    feature_idxs.remove(j)
-
-    # Perform M iterations to estimate Shapley value
-    for _ in range(M):
-        # Sample a random index to get a random instance from X_train
-        random_idx = random.randint(0, len(X_train) - 1)
-        z = X_train[random_idx]
-        
-        # Randomly select a subset of features for the positive side of the Shapley value
-        x_idx = random.sample(feature_idxs, min(max(int(0.2 * n_features), random.choice(feature_idxs)), int(0.8 * n_features)))
-
-        # Determine the complement set for the negative side of the Shapley value
-        z_idx = [idx for idx in feature_idxs if idx not in x_idx]
-
-        # Construct two new instances by modifying the features
-        x_plus_j = np.array([x[0, i] if i in x_idx + [j] else z[i] for i in range(n_features)])
-        x_minus_j = np.array([z[i] if i in z_idx + [j] else x[0, i] for i in range(n_features)])
-
-        # Calculate the marginal contribution for the current iteration
-        marginal_contribution = f.predict_(x_plus_j.reshape(1, -1))[0] - \
-                                f.predict_(x_minus_j.reshape(1, -1))[0]
-        
-        # Append the marginal contribution to the list
-        marginal_contributions.append(marginal_contribution)
-
-    # Calculate the average Shapley value over all iterations
-    phi_j_x = sum(marginal_contributions) / len(marginal_contributions)
-
-    return phi_j_x
-
-def explain_features(X_train, f, x, M=100):
-    """
-    Calculate Shapley values for all features for all instances in x.
-
-    Parameters:
-    - X_train (np.ndarray): Training dataset used to sample instances.
-    - f: Uncertainty Explanation object.
-    - x (np.ndarray): Instance(s) for which the Shapley values are calculated.
-    - M (int): Number of iterations to estimate the Shapley values (default is 100).
-
-    Returns:
-    - list of lists: Shapley values for all features for each instance in x.
-    """
-    shapley_values_for_all_instances = []
-
-    # Iterate over instances in x
-    for instance in tqdm(x, desc="Explaining Instances", unit="instance"):
-        shapley_values_for_instance = []
-
-        # Get the number of features in the instance
-        n_features = len(instance)
-
-        # Calculate Shapley value for each feature
-        for j in range(n_features):
-            shapley_value = calculate_shapley_value(X_train, f, instance.reshape(1,-1), j, M)
-            shapley_values_for_instance.append(shapley_value)
-
-        shapley_values_for_all_instances.append(shapley_values_for_instance)
-
-    return np.array(shapley_values_for_all_instances)
-
-class MetaUncertaintyEstimator:
-    """
-    MetaUncertaintyEstimator class for estimating uncertainty using heuristics and fuzzy clustering.
-
-    Parameters:
-    - f: A fitted uncertainty explanation object with weights and cluster centers.
+    - uncertainty_system: An instance of the uncertainty model to be explained.
+    - M: Number of Monte Carlo samples for SHAP value estimation.
 
     Methods:
-    - predict_(x): Predicts the misclassifications risk based on the provided instance and the meta-model's properties.
-    """
-    def __init__(self, f):
-        self.f = f
-
-    def predict_(self, x):
-        """
-        Generate predictions and assess misclassification risk for input data.
-
-        Parameters:
-        X (array-like): Input data for prediction.
-
-        Returns:
-        misclassifications_risk (array-like): Risk assessment of misclassifications for the input data.
-        """
-        ## Weight heuristics by the determined weights.
-        x = x * self.f.weights
-
-        # Predict cluster memberships and other information using the fuzzy clustering system.
-        # This step is necessary for risk assessment.
-        u, u0, d, jm, p, fpc = fuzz.cluster.cmeans_predict(
-                np.transpose(x), self.f.cntr, 2, error=0.005, maxiter=100, init=None)
-
-        # Calculate misclassifications risk based on cluster memberships and cluster-specific heuristics.
-        misclassifications_risk = self.f._weighted_average(u, self.f.Cluster_IH_mean)
-        return misclassifications_risk
-    
-def explain_meta_features(f, X_train, y_train, x, M=100):
-    """
-    Explain the meta-features of an instance using Shapley values.
+    - explain(self, X_train, x, feature_names=[], level='meta'):
+        Explains model uncertainty using SHAP values and visualizes the explanations.
 
     Parameters:
-    - f: Uncertainty Explanation object.
-    - X_train (np.ndarray): Training dataset.
-    - y_train (np.ndarray): Target values corresponding to the training dataset.
-    - x (np.ndarray): Instance(s) for which the meta-feature Shapley values are calculated.
-    - M (int): Number of iterations to estimate the Shapley values (default is 100).
+    - X_train: Training data used to explain the model.
+    - x: Data point for which uncertainty is to be explained.
+    - feature_names: List of feature names. If not provided, default names are used.
+    - level: 'meta' for explaining meta-uncertainty, 'instance' for explaining instance-level uncertainty.
 
-    Returns:
-    - list: Shapley values for the meta-features.
+    Attributes:
+    - uncertainty_system: The uncertainty model to be explained.
+    - M: Number of Monte Carlo samples for SHAP value estimation.
+
+    Example:
+    # Create an instance of UncertaintyExplainer
+    explainer = UncertaintyExplainer(uncertainty_system=my_uncertainty_model, M=100)
+
+    # Explain model uncertainty for a data point
+    explainer.explain(X_train=data_train, x=data_point, feature_names=['Feature1', 'Feature2'], level='meta')
     """
-    # Initialize HeuristicsCalculator and fit it to the training data
-    hc = HeursiticsCalculator()
-    hc.fit(X_train, y_train)
+    def __init__(self, uncertainty_system = None, M=100):
+        self.uncertainty_system = uncertainty_system
+        self.M = M
+    
+    def explain(self, X_train, x, feature_names=[], level='meta'):
+        """
+        Explains model uncertainty using SHAP values and visualizes the explanations.
 
-    # Calculate heuristics for the given instance(s)
-    heuristics = hc.calculate(x)
+        Parameters:
+        - X_train: Training data used to explain the model.
+        - x: Data point for which uncertainty is to be explained.
+        - feature_names: List of feature names. If not provided, default names are used.
+        - level: 'meta' for explaining meta-uncertainty, 'instance' for explaining instance-level uncertainty.
+        """
+        # If feature names are not provided, use default names like 'Feature 0', 'Feature 1', etc.
+        if not feature_names:
+            for i in range(X_train.shape[1]):
+                feature_names.append(f'Feature {i}')
 
-    # Initialize MetaUncertaintyEstimator using the provided Uncertainty Estimator
-    mue = MetaUncertaintyEstimator(f)
+        # If explaining meta-uncertainty, calculate heuristics and use a MetaUncertaintyEstimator
+        if level == 'meta':
+            heuristics = self.uncertainty_system.heuristics_calculator.calculate(x)
+            meta_uncertainty_system = MetaUncertaintyEstimator(self.uncertainty_system)
+            shap_values = self._explain_features(meta_uncertainty_system, self.uncertainty_system.heuristics, heuristics)
+        else:
+            # If explaining instance-level uncertainty, use the provided uncertainty_system directly
+            shap_values = self._explain_features(self.uncertainty_system, X_train, x)
+        
+        # Check if there are multiple data points for visualization
+        if x.shape[0] > 1:
+            if level == 'meta':
+                # Visualize meta-uncertainty using a beeswarm plot
+                self.beeswarm_plot(self.uncertainty_system.heuristics, shap_values, feature_names=['KDN','DS','DCD','OL','CLOL','HD','EC'])
+            else:
+                # Visualize instance-level uncertainty using a beeswarm plot
+                self.beeswarm_plot(X_train, shap_values, feature_names=feature_names)
+        else:
+            if level == 'meta':
+                # Visualize meta-uncertainty for a single data point using a force plot
+                self.force_plot(heuristics[0], shap_values[0], np.mean(self.uncertainty_system.predict(X_train)), feature_names=['KDN','DS','DCD','OL','CLOL','HD','EC'])
+            else:
+                # Visualize instance-level uncertainty for a single data point using a force plot
+                self.force_plot(x[0], shap_values[0], np.mean(self.uncertainty_system.predict(X_train)), feature_names=feature_names)
 
-    # Explain the meta-features contribution to the degree of uncertainty using the explain_features function
-    shap_values = explain_features(f.heuristics, mue, heuristics, M=M)
 
-    return heuristics, np.array(shap_values)
+    def _explain_features(self, uncertainty_system, X_train, x):
+        """
+        Calculate Shapley values for all features for all instances in x.
+
+        Parameters:
+        - f: Uncertainty Explanation object.
+        - X_train (np.ndarray): Training dataset used to sample instances.
+        - x (np.ndarray): Instance(s) for which the Shapley values are calculated.
+        - M (int): Number of iterations to estimate the Shapley values (default is 100).
+
+        Returns:
+        - list of lists: Shapley values for all features for each instance in x.
+        """
+        shapley_values_for_all_instances = []
+        n_features = x.shape[1]
+
+        # Iterate over instances in x
+        for instance in tqdm(x, desc="Explaining Instances", unit="instance"):
+            shapley_values_for_instance = []
+
+            # Get the number of features in the instance
+
+            # Calculate Shapley value for each feature
+            for j in range(n_features):
+                shapley_value = self._calculate_shapley_value(X_train, uncertainty_system, instance.reshape(1,-1), j)
+                shapley_values_for_instance.append(shapley_value)
+
+            shapley_values_for_all_instances.append(shapley_values_for_instance)
+
+        return np.array(shapley_values_for_all_instances)
+
+    def _calculate_shapley_value(self, X_train, f, x, j):
+        """
+        Calculate the Shapley value for a specific feature j using a random subset of other features.
+
+        Parameters:
+        - X_train (np.ndarray): Training dataset used to sample instances.
+        - f: Uncertainty Explaination object
+        - x (np.ndarray): Instance(s) for which the Shapley value is calculated.
+        - j (int): Index of the feature for which the Shapley value is calculated.
+        - M (int): Number of iterations to estimate the Shapley value (default is 100).
+
+        Returns:
+        - float: Shapley value for the specified feature.
+        """
+        # Check if x has the correct shape
+        if x.shape[0] != 1:
+            raise ValueError("Input instance x must have shape (1, n).")
+
+        # Get the number of features in the instance x
+        n_features = x.shape[1]
+        
+        # Initialize an empty list to store marginal contributions
+        marginal_contributions = []
+        
+        # Create a list of feature indices, excluding the feature of interest (j)
+        feature_idxs = list(range(n_features))
+        feature_idxs.remove(j)
+
+        # Perform M iterations to estimate Shapley value
+        for _ in range(self.M):
+            # Sample a random index to get a random instance from X_train
+            random_idx = random.randint(0, len(X_train) - 1)
+            z = X_train[random_idx]
+            
+            # Randomly select a subset of features for the positive side of the Shapley value
+            x_idx = random.sample(feature_idxs, min(max(int(0.2 * n_features), random.choice(feature_idxs)), int(0.8 * n_features)))
+
+            # Determine the complement set for the negative side of the Shapley value
+            z_idx = [idx for idx in feature_idxs if idx not in x_idx]
+
+            # Construct two new instances by modifying the features
+            x_plus_j = np.array([x[0, i] if i in x_idx + [j] else z[i] for i in range(n_features)])
+            x_minus_j = np.array([z[i] if i in z_idx + [j] else x[0, i] for i in range(n_features)])
+
+            # Calculate the marginal contribution for the current iteration
+            marginal_contribution = f.predict(x_plus_j.reshape(1, -1))[0] - \
+                                    f.predict(x_minus_j.reshape(1, -1))[0]
+            
+            # Append the marginal contribution to the list
+            marginal_contributions.append(marginal_contribution)
+
+        # Calculate the average Shapley value over all iterations
+        phi_j_x = sum(marginal_contributions) / len(marginal_contributions)
+
+        return phi_j_x    
+    
+    def beeswarm_plot(self, X_train, X_shap, feature_names):
+        """
+        Create a horizontal bee swarm plot to visualize the Shapley values of features
+        alongside their scaled and normalized training set values.
+
+        Parameters:
+        - X_train (numpy.ndarray): The training set data with features.
+        - X_shap (numpy.ndarray): The Shapley values corresponding to each feature in the training set.
+        - feature_names (list): A list of feature names.
+
+        Returns:
+        None
+        """
+        # Create a DataFrame for the data
+        data = pd.DataFrame(X_train, columns=feature_names)
+        for col in data.columns:
+            data[col] =  stats.zscore(data[col])
+
+        for col in data.columns:
+            data[col] = (data[col] - data[col].min()) / (data[col].max() - data[col].min())
+
+
+        # Create a DataFrame for the Shapley values
+        shap_df = pd.DataFrame(X_shap, columns=feature_names)
+
+        # Calculate mean absolute Shapley values for each feature
+        mean_abs_shap_values = shap_df.abs().mean()
+
+        # Sort feature names based on mean absolute Shapley values
+        sorted_feature_names = mean_abs_shap_values.sort_values(ascending=False).index
+
+        # Melt both DataFrames to long format
+        data_melted = pd.melt(data, var_name='feature', value_name='feature_value')
+        shap_melted = pd.melt(shap_df, var_name='feature', value_name='shap_value')
+
+        # Combine the feature values and Shapley values
+        combined_data = pd.concat([data_melted, shap_melted['shap_value']], axis=1)
+
+        # Increase the space between y-ticks
+        plt.figure(figsize=(12, 1.5 * len(feature_names)))
+
+        # Create a horizontal bee swarm plot with no legend, using the sorted feature order
+        ax = sns.swarmplot(
+            x='shap_value', y='feature', hue='feature_value',
+            data=combined_data, palette=sns.color_palette("coolwarm", as_cmap=True),
+            order=sorted_feature_names, orient='h', size=8, legend=False
+        )
+
+        # Add a vertical line at x=0
+        ax.axvline(x=0, color='black', linestyle='--', linewidth=1)
+
+        # Add a vertical color bar to the right
+        sm = plt.cm.ScalarMappable(cmap=sns.color_palette("coolwarm", as_cmap=True))
+        sm.set_clim(vmin=0, vmax=1)
+        cbar = plt.colorbar(sm, ax=ax, orientation='vertical', pad=0.05)
+        cbar.set_label('Feature Value')
+
+        # Customize color bar ticks and labels
+        cbar.set_ticks([0, 1])
+        cbar.set_ticklabels(['Low', 'High'])
+
+        plt.xlabel('SHAP value (impact on model output)')
+        ax.set_ylabel('') 
+        plt.show()
+    
+    def force_plot(self, features, shap_values, base_value, feature_names):
+        """
+        Create a force plot using SHAP (SHapley Additive exPlanations) to visualize the impact
+        of each feature on the model output for a specific instance.
+
+        Parameters:
+        - X (numpy.ndarray): The feature values of a specific instance.
+        - X_shap (numpy.ndarray): The Shapley values corresponding to each feature in the instance.
+        - base_value (float): The base value of the model output for the given instance.
+        - feature_names (list): A list of feature names.
+
+        Returns:
+        None
+        """
+        # Filter out bars with rounded Shapley value equals 0
+        nonzero_indices = [i for i, value in enumerate(np.round(features, 3)) if value != 0]
+        feature_names_filtered = [feature_names[i] for i in nonzero_indices]
+        shap_values_filtered = shap_values[nonzero_indices]
+        features_filtered = features[nonzero_indices]
+
+        # Sort features based on absolute Shapley values
+        sorted_indices = np.argsort(shap_values_filtered)
+        feature_names_sorted = [feature_names_filtered[i] for i in sorted_indices]
+        shap_values_sorted = shap_values_filtered[sorted_indices]
+        features_sorted = features_filtered[sorted_indices]
+
+        # Create a horizontal bar plot with pointed ends
+        plt.figure(figsize=(20, 2))
+
+        # Add bars consecutively without horizontal overlap
+        bar_height = 0.5
+        bar_start_positive = base_value + sum(shap_values)
+        bar_start_negative = base_value + sum(shap_values)
+
+        for i, (feature, shap_value, feature_name) in enumerate(zip(features_sorted, -shap_values_sorted, feature_names_sorted)):
+            if shap_value > 0:
+                plt.barh(0, shap_value, left=bar_start_positive, color='#5876e2', alpha=0.7, capstyle='projecting', edgecolor='black', linewidth=0.5)
+                label = f'{feature_name} =\n {round(feature, 3)}'
+                plt.text(bar_start_positive + shap_value / 2, 0, label, va='center', ha='center', fontsize=12, color='black', weight='bold')
+                bar_start_positive += shap_value
+            else:
+                plt.barh(0, shap_value, left=bar_start_negative, color='#d1493e', alpha=0.7, capstyle='projecting', edgecolor='black', linewidth=0.5)
+                label = f'{feature_name} =\n {abs(round(feature, 3))}'
+                plt.text(bar_start_negative - abs(shap_value) / 2, 0, label, va='center', ha='center', fontsize=12, color='black', weight='bold')
+                bar_start_negative -= abs(shap_value)
+
+        # Add text and axis line of the base value and f(x)
+        plt.text(base_value, bar_height+0.05, f"Base Value = {round(base_value,3)}",
+                ha='center', va='center', color='black', rotation=0, fontsize=14)
+        plt.text(base_value + sum(shap_values), bar_height+0.05, f"f(x) = {round(base_value + sum(shap_values),3)}",
+                ha='center', va='center', color='black', rotation=0, fontsize=14)
+
+        plt.axvline(x=base_value, color='black', linestyle='--', linewidth=1)  # Add the vertical line reflecting the base value
+        plt.axvline(x=base_value + sum(shap_values), color='black', linestyle='--', linewidth=1.5)  # Add the vertical line reflecting the uncertainty score
+
+        #hide yticks
+        plt.yticks([])

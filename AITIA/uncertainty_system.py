@@ -110,7 +110,7 @@ class UncertaintyEstimator:
         self.X = None
         self.y = None
 
-    def predict(self, X):
+    def predict(self, X, return_predictions=False):
         """
         Generate predictions and assess misclassification risk for input data.
 
@@ -123,10 +123,6 @@ class UncertaintyEstimator:
         misclassifications_risk (array-like): Risk assessment of misclassifications for the input data.
         """
 
-        # Make predictions using the fitted model on the input data X.
-        y_pred = self.model.predict(X)
-        y_prob = self.model.predict_proba(X)
-
         # Calculate heuristics for the input data using the heuristic calculator.
         heuristics = self.heuristics_calculator.calculate(X)
 
@@ -141,42 +137,14 @@ class UncertaintyEstimator:
         # Calculate misclassifications risk based on cluster memberships and cluster-specific heuristics.
         misclassifications_risk = self._weighted_average(u, self.Cluster_IH_mean)
 
-        # Return the model's predictions (y_pred), probability and the calculated misclassifications risk.
-        return y_pred, y_prob, misclassifications_risk
-    
-    def predict_(self, X):
-        """
-        Generate predictions and assess misclassification risk for input data.
-
-        Parameters:
-        X (array-like): Input data for prediction.
-
-        Returns:
-        misclassifications_risk (array-like): Risk assessment of misclassifications for the input data.
-        """
-
         # Make predictions using the fitted model on the input data X.
-        y_pred = self.model.predict(X)
-        y_prob = self.model.predict_proba(X)
-
-        # Calculate heuristics for the input data using the heuristic calculator.
-        heuristics = self.heuristics_calculator.calculate(X)
-
-        ## Weight heuristics by the determined weights.
-        heuristics = heuristics * self.weights
-
-        # Predict cluster memberships and other information using the fuzzy clustering system.
-        # This step is necessary for risk assessment.
-        u, u0, d, jm, p, fpc = fuzz.cluster.cmeans_predict(
-                np.transpose(heuristics), self.cntr, 2, error=0.005, maxiter=100, init=None)
-
-        # Calculate misclassifications risk based on cluster memberships and cluster-specific heuristics.
-        misclassifications_risk = self._weighted_average(u, self.Cluster_IH_mean)
-
-        # Return the model's predictions (y_pred), probability and the calculated misclassifications risk.
-        return misclassifications_risk
+        if return_predictions:
+            y_pred = self.model.predict(X)
+            y_prob = self.model.predict_proba(X)
+            return y_pred, y_prob, misclassifications_risk
+        else:
+            return misclassifications_risk
     
-
     def generate_knowledge_base(self, n_datasets, X, y, max_distance=0.4, pop_size=40, n_gen=10, n_splits=5):
         """
         Generate a knowledge base by creating synthetic datasets and evaluating a model on them.
@@ -420,3 +388,38 @@ class RepeatedMinStopper(EarlyStopper):
 
         # Return True if the counter exceeds or equals the defined `n_best` value, indicating stopping.
         return self.count >= self.n_best
+
+class MetaUncertaintyEstimator:
+    """
+    MetaUncertaintyEstimator class for estimating uncertainty using heuristics and fuzzy clustering.
+
+    Parameters:
+    - f: A fitted uncertainty explanation object with weights and cluster centers.
+
+    Methods:
+    - predict(x): Predicts the misclassifications risk based on the provided instance and the meta-model's properties.
+    """
+    def __init__(self, f):
+        self.f = f
+
+    def predict(self, x):
+        """
+        Generate predictions and assess misclassification risk for input data.
+
+        Parameters:
+        X (array-like): Input data for prediction.
+
+        Returns:
+        misclassifications_risk (array-like): Risk assessment of misclassifications for the input data.
+        """
+        ## Weight heuristics by the determined weights.
+        x = x * self.f.weights
+
+        # Predict cluster memberships and other information using the fuzzy clustering system.
+        # This step is necessary for risk assessment.
+        u, u0, d, jm, p, fpc = fuzz.cluster.cmeans_predict(
+                np.transpose(x), self.f.cntr, 2, error=0.005, maxiter=100, init=None)
+
+        # Calculate misclassifications risk based on cluster memberships and cluster-specific heuristics.
+        misclassifications_risk = self.f._weighted_average(u, self.f.Cluster_IH_mean)
+        return misclassifications_risk
