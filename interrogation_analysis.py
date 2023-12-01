@@ -305,15 +305,15 @@ class CompetencyAnalysis:
                 print(f"Error processing entry {v}: {e}")
                 del v # Remove the entry from the datasets dictionary
     
-    def visualise_results(ca):
+    def visualise_results(self):
         """
         Visualize the results using a heatmap and scatter plot.
         """
 
         # Extract F1, N1, and accuracy scores from the datasets
-        f1_scores = [v['F1'] for v in ca.datasets.values()]
-        n1_scores = [v['N1'] for v in ca.datasets.values()]
-        accuracy_scores = [v['score'] for v in ca.datasets.values()]
+        f1_scores = [v['F1'] for v in self.datasets.values()]
+        n1_scores = [v['N1'] for v in self.datasets.values()]
+        accuracy_scores = [v['score'] for v in self.datasets.values()]
 
         # Set up a grid for the heatmap
         f1_range = np.linspace(min(f1_scores), max(f1_scores), 100)
@@ -338,7 +338,7 @@ class CompetencyAnalysis:
 
         # Plot actual data points on top
         plt.scatter(f1_scores, n1_scores, c=accuracy_scores, s=40, edgecolors='k', linewidths=1, marker='o', label='Synthetic Datasets')
-        plt.scatter(ca.f1_score, ca.n1_score, color='red', edgecolors='k', linewidths=1, marker='s', label='Original Specification')
+        plt.scatter(self.f1_score, self.n1_score, color='red', edgecolors='k', linewidths=1, marker='s', label='Original Specification')
 
         # Customize the appearance of the plot
         plt.colorbar(label='Weighted Classifier Score')
