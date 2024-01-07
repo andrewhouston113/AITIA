@@ -31,7 +31,7 @@ class UncertaintyEstimator:
     >>> y_pred, misclassification_risk = uc.predict(X_test)
     """
 
-    def __init__(self, model, cv = 5, knowledge_base = None, verbose=False):
+    def __init__(self, model, cv = 5, knowledge_base = None, verbose=False, kneighbors_n=5, max_depth=4, balanced=False, rdos_neighbors=5, categorical_idx=[]):
         self.model = model
         self.cv = cv
         self.knowledge_base = knowledge_base
@@ -39,7 +39,13 @@ class UncertaintyEstimator:
         self.heuristics_calculator = None
         self.X = None
         self.y = None
+        self.categorical_idx = categorical_idx
+        self.kneighbors_n=kneighbors_n, 
+        self.max_depth=max_depth, 
+        self.balanced=balanced, 
+        self.rdos_neighbors=rdos_neighbors
         np.int = np.int64
+
     
     def fit(self, X, y):
         """
@@ -78,14 +84,14 @@ class UncertaintyEstimator:
             misclassifications += list(y_test != y_pred)
             
             # Calculate heuristics for this fold.
-            hc = HeursiticsCalculator()
+            hc = HeursiticsCalculator(kneighbors_n=self.kneighbors_n, max_depth=self.max_depth, balanced=self.balanced, rdos_neighbors=self.rdos_neighbors, categorical_idx=self.categorical_idx)
             hc.fit(X_train, y_train)
             heuristics = np.vstack([heuristics, hc.calculate(X_test)])        
 
         # If a knowledge base is available, append its heuristics and misclassifications.
         if self.knowledge_base is not None:
-            heuristics = np.append(heuristics, self.knowedge_base['heuristics'])
-            misclassifications = np.append(misclassifications, self.knowedge_base['misclassifications'])
+            heuristics = np.append(heuristics, self.knowledge_base['heuristics'], axis=0)
+            misclassifications = np.append(misclassifications, self.knowledge_base['misclassifications'], axis=0)
         
         self.heuristics = heuristics
         
@@ -103,7 +109,7 @@ class UncertaintyEstimator:
 
         # Fit the model on the full dataset and create a heuristic calculator for future use.
         self.model.fit(X, y)
-        self.heuristics_calculator = HeursiticsCalculator()
+        self.heuristics_calculator = HeursiticsCalculator(kneighbors_n=self.kneighbors_n, max_depth=self.max_depth, balanced=self.balanced, rdos_neighbors=self.rdos_neighbors, categorical_idx=self.categorical_idx)
         self.heuristics_calculator.fit(X, y)
 
         # Clear the stored input data and labels.
@@ -210,7 +216,7 @@ class UncertaintyEstimator:
                 misclassifications += list(y_test != y_pred)
                 
                 # Calculate heuristics for this fold.
-                hc = HeursiticsCalculator()
+                hc = HeursiticsCalculator(kneighbors_n=self.kneighbors_n, max_depth=self.max_depth, balanced=self.balanced, rdos_neighbors=self.rdos_neighbors, categorical_idx=self.categorical_idx)
                 hc.fit(X_train, y_train)
                 heuristics = np.vstack([heuristics, hc.calculate(X_test)])
         
@@ -285,7 +291,7 @@ class UncertaintyEstimator:
             misclassifications += list(y_test != y_pred)
 
             # Calculate heuristics for this fold using HeuristicsCalculator.
-            hc = HeursiticsCalculator()
+            hc = HeursiticsCalculator(kneighbors_n=self.kneighbors_n, max_depth=self.max_depth, balanced=self.balanced, rdos_neighbors=self.rdos_neighbors, categorical_idx=self.categorical_idx)
             hc.fit(X_train, y_train)
             heuristics = np.vstack([heuristics, hc.calculate(X_test)])
 
@@ -299,8 +305,8 @@ class UncertaintyEstimator:
 
             # If a knowledge base is available, append its heuristics and misclassifications to the training data.
             if self.knowledge_base != None:
-                train_heuristics = np.append(train_heuristics, self.knowedge_base['heuristics'])
-                train_misclassifications = np.append(train_misclassifications, self.knowedge_base['misclassifications'])
+                train_heuristics = np.append(train_heuristics, self.knowledge_base['heuristics'], axis=0)
+                train_misclassifications = np.append(train_misclassifications, self.knowledge_base['misclassifications'], axis=0)
 
             # Weight the heuristics by the given weights.
             train_heuristics = train_heuristics * weights

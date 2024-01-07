@@ -9,6 +9,7 @@ from scipy.spatial import distance
 from scipy.stats import norm
 from itertools import combinations
 from AITIA.utils import extract_decision_tree, diversity_degree
+import math
 
 class DisjunctSize:
     """
@@ -548,11 +549,12 @@ class ClassLikelihood:
     >>> evidence_conflict, evidence_volume = clf.calculate_evidence_conflict(X_test, return_evidence_volume=True)
     """
 
-    def __init__(self):
+    def __init__(self, categorical_idx=[]):
         self.data = None
         self.classes = None
+        self.categorical_idx=categorical_idx
 
-    def fit(self, X, y, categorical_idx=[]):
+    def fit(self, X, y):
         """
         Fit the Likelihood class with the dataset.
 
@@ -568,7 +570,7 @@ class ClassLikelihood:
             raise ValueError("X and y must have the same number of instances.")
         
         # Store the data description in a dictionary format
-        self.data = self._class_stats(X, y, categorical_idx)
+        self.data = self._class_stats(X, y, self.categorical_idx)
         self.classes = np.unique(y)
 
     def calculate_class_likelihood_difference(self, X, y):
@@ -775,6 +777,7 @@ class ClassLikelihood:
 
         # Calculate evidence volume for each class
         evidence_volume_per_class = [self._evidence_volume(instance, class_label) for class_label in self.classes]
+        evidence_volume_per_class = [0 if math.isnan(volume) else volume for volume in evidence_volume_per_class]
 
         # Find the maximum evidence volume among classes
         evidence_volume = max(evidence_volume_per_class)
@@ -1285,14 +1288,14 @@ class HyperplaneDistance:
 
 class HeursiticsCalculator:
 
-    def __init__(self, kneighbors_n=5, max_depth=4, balanced=False, rdos_neighbors=5):
-        self.KDN = KNeighbors(n_neighbors=kneighbors_n)
+    def __init__(self, kneighbors_n=5, max_depth=4, balanced=False, rdos_neighbors=5, categorical_idx=[]):
+        self.KDN = KNeighbors(n_neighbors=kneighbors_n[0] if isinstance(kneighbors_n, tuple) else kneighbors_n)
         self.DS = DisjunctSize()
-        self.DCD = DisjunctClass(max_depth=max_depth, balanced=balanced)
+        self.DCD = DisjunctClass(max_depth=max_depth[0] if isinstance(max_depth, tuple) else max_depth, balanced=balanced[0] if isinstance(balanced, tuple) else balanced)
         self.HD = HyperplaneDistance(balanced=balanced)
-        self.OL = RDOS(n_neighbors=rdos_neighbors)
-        self.CL_OL = ClassLevelRDOS(n_neighbors=rdos_neighbors)
-        self.EC = ClassLikelihood()
+        self.OL = RDOS(n_neighbors=rdos_neighbors[0] if isinstance(rdos_neighbors, tuple) else rdos_neighbors)
+        self.CL_OL = ClassLevelRDOS(n_neighbors=rdos_neighbors[0] if isinstance(rdos_neighbors, tuple) else rdos_neighbors)
+        self.EC = ClassLikelihood(categorical_idx=categorical_idx)
 
     def fit(self,X,y):
         self.KDN.fit(X,y)

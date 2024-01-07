@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import statsmodels.api as sm
@@ -273,7 +274,7 @@ class CompetencyAnalysis:
                         X=X, 
                         y=y, 
                         Mimic_Classes=True, 
-                        Mimic_DataTypes=False,
+                        Mimic_DataTypes=True,
                         Mimic_Dataset=False)
 
             syboid.Generate_Data(pop_size=self.pop_size,n_gen=self.n_gen)
@@ -403,7 +404,7 @@ class ConceptDriftAnalysis:
             y=self.y,
             Mimic_Classes=True,
             Mimic_DataTypes=True,
-            Mimic_Dataset=True,
+            Mimic_Dataset=False,
         )
         
         syboid.Generate_Data(pop_size=self.pop_size, n_gen=self.n_gen)
@@ -533,7 +534,7 @@ def derive_abstention_threshold(X, y, uncertainty_estimator, scoring='roc_auc', 
         uncertainty_estimator.fit(X_train, y_train)
 
         # Make predictions on the validation set
-        y_pred, y_prob, uncertainty = uncertainty_estimator.predict(X_val)
+        y_pred, y_prob, uncertainty = uncertainty_estimator.predict(X_val, return_predictions=True)
 
         # Iterate through threshold values from 99 to 0
         for threshold_ in range(99, -1, -1):
@@ -619,10 +620,13 @@ class UncertaintyExplainer:
         if x.shape[0] > 1:
             if level == 'meta':
                 # Visualize meta-uncertainty using a beeswarm plot
-                self.beeswarm_plot(self.uncertainty_system.heuristics, shap_values, feature_names=['KDN','DS','DCD','OL','CLOL','HD','EC'])
+                self.beeswarm_plot(heuristics, shap_values, feature_names=['KDN','DS','DCD','OL','CLOL','HD','EC'])
+                #self.bar_plot(shap_values, feature_names=['KDN','DS','DCD','OL','CLOL','HD','EC'])
             else:
                 # Visualize instance-level uncertainty using a beeswarm plot
-                self.beeswarm_plot(X_train, shap_values, feature_names=feature_names)
+                self.beeswarm_plot(x, shap_values, feature_names=feature_names)
+                #self.bar_plot(shap_values, feature_names=feature_names)
+
         else:
             if level == 'meta':
                 # Visualize meta-uncertainty for a single data point using a force plot
@@ -798,46 +802,210 @@ class UncertaintyExplainer:
         Returns:
         None
         """
-        # Filter out bars with rounded Shapley value equals 0
-        nonzero_indices = [i for i, value in enumerate(np.round(features, 3)) if value != 0]
-        feature_names_filtered = [feature_names[i] for i in nonzero_indices]
-        shap_values_filtered = shap_values[nonzero_indices]
-        features_filtered = features[nonzero_indices]
+        upper_bounds = None
+        lower_bounds = None
+        num_features = len(shap_values)
+        row_height = 0.75
+        rng = range(num_features - 1, -1, -1)
+        order = np.argsort(-np.abs(shap_values))
+        pos_lefts = []
+        pos_inds = []
+        pos_widths = []
+        pos_low = []
+        pos_high = []
+        neg_lefts = []
+        neg_inds = []
+        neg_widths = []
+        neg_low = []
+        neg_high = []
+        loc = base_value + shap_values.sum()
+        yticklabels = ["" for i in range(num_features + 1)]
 
-        # Sort features based on absolute Shapley values
-        sorted_indices = np.argsort(shap_values_filtered)
-        feature_names_sorted = [feature_names_filtered[i] for i in sorted_indices]
-        shap_values_sorted = shap_values_filtered[sorted_indices]
-        features_sorted = features_filtered[sorted_indices]
+        # size the plot based on how many features we are plotting
+        plt.gcf().set_size_inches(10, num_features * row_height + 2.25)
 
-        # Create a horizontal bar plot with pointed ends
-        plt.figure(figsize=(20, 2))
+        # see how many individual (vs. grouped at the end) features we are plotting
+        if num_features == len(shap_values):
+            num_individual = num_features
+        else:
+            num_individual = num_features - 1
 
-        # Add bars consecutively without horizontal overlap
-        bar_height = 0.5
-        bar_start_positive = base_value + sum(shap_values)
-        bar_start_negative = base_value + sum(shap_values)
-
-        for i, (feature, shap_value, feature_name) in enumerate(zip(features_sorted, -shap_values_sorted, feature_names_sorted)):
-            if shap_value > 0:
-                plt.barh(0, shap_value, left=bar_start_positive, color='#5876e2', alpha=0.7, capstyle='projecting', edgecolor='black', linewidth=0.5)
-                label = f'{feature_name} =\n {round(feature, 3)}'
-                plt.text(bar_start_positive + shap_value / 2, 0, label, va='center', ha='center', fontsize=12, color='black', weight='bold')
-                bar_start_positive += shap_value
+        # compute the locations of the individual features and plot the dashed connecting lines
+        for i in range(num_individual):
+            sval = shap_values[order[i]]
+            loc -= sval
+            if sval >= 0:
+                pos_inds.append(rng[i])
+                pos_widths.append(sval)
+                if lower_bounds is not None:
+                    pos_low.append(lower_bounds[order[i]])
+                    pos_high.append(upper_bounds[order[i]])
+                pos_lefts.append(loc)
             else:
-                plt.barh(0, shap_value, left=bar_start_negative, color='#d1493e', alpha=0.7, capstyle='projecting', edgecolor='black', linewidth=0.5)
-                label = f'{feature_name} =\n {abs(round(feature, 3))}'
-                plt.text(bar_start_negative - abs(shap_value) / 2, 0, label, va='center', ha='center', fontsize=12, color='black', weight='bold')
-                bar_start_negative -= abs(shap_value)
+                neg_inds.append(rng[i])
+                neg_widths.append(sval)
+                if lower_bounds is not None:
+                    neg_low.append(lower_bounds[order[i]])
+                    neg_high.append(upper_bounds[order[i]])
+                neg_lefts.append(loc)
+            if num_individual != num_features or i + 4 < num_individual:
+                plt.plot([loc, loc], [rng[i] - 1 - 0.4, rng[i] + 0.4],
+                        color="#bbbbbb", linestyle="--", linewidth=0.5, zorder=-1)
+            if features is None:
+                yticklabels[rng[i]] = feature_names[order[i]]
+            else:
+                yticklabels[rng[i]] = feature_names[order[i]] + " = " + str(np.round(features[order[i]],3))
+            
+        # add a last grouped feature to represent the impact of all the features we didn't show
+        if num_features < len(shap_values):
+            yticklabels[0] = "%d other features" % (len(shap_values) - num_features + 1)
+            remaining_impact = base_value - loc
+            if remaining_impact < 0:
+                pos_inds.append(0)
+                pos_widths.append(-remaining_impact)
+                pos_lefts.append(loc + remaining_impact)
+            else:
+                neg_inds.append(0)
+                neg_widths.append(-remaining_impact)
+                neg_lefts.append(loc + remaining_impact)
+        
+        points = pos_lefts + list(np.array(pos_lefts) + np.array(pos_widths)) + neg_lefts + \
+            list(np.array(neg_lefts) + np.array(neg_widths))
+        dataw = np.max(points) - np.min(points)
 
-        # Add text and axis line of the base value and f(x)
-        plt.text(base_value, bar_height+0.05, f"Base Value = {round(base_value,3)}",
-                ha='center', va='center', color='black', rotation=0, fontsize=14)
-        plt.text(base_value + sum(shap_values), bar_height+0.05, f"f(x) = {round(base_value + sum(shap_values),3)}",
-                ha='center', va='center', color='black', rotation=0, fontsize=14)
+        # draw invisible bars just for sizing the axes
+        label_padding = np.array([0.1*dataw if w < 1 else 0 for w in pos_widths])
+        plt.barh(pos_inds, np.array(pos_widths) + label_padding + 0.02*dataw,
+                left=np.array(pos_lefts) - 0.01*dataw, color='#5876e2', alpha=0)
+        label_padding = np.array([-0.1*dataw if -w < 1 else 0 for w in neg_widths])
+        plt.barh(neg_inds, np.array(neg_widths) + label_padding - 0.02*dataw,
+                left=np.array(neg_lefts) + 0.01*dataw, color='#d1493e', alpha=0)
 
-        plt.axvline(x=base_value, color='black', linestyle='--', linewidth=1)  # Add the vertical line reflecting the base value
-        plt.axvline(x=base_value + sum(shap_values), color='black', linestyle='--', linewidth=1.5)  # Add the vertical line reflecting the uncertainty score
+        # define variable we need for plotting the arrows
+        head_length = 0.08
+        bar_width = 0.8
+        xlen = plt.xlim()[1] - plt.xlim()[0]
+        fig = plt.gcf()
+        ax = plt.gca()
+        bbox = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+        width = bbox.width
+        bbox_to_xscale = xlen/width
+        hl_scaled = bbox_to_xscale * head_length
+        renderer = fig.canvas.get_renderer()
 
-        #hide yticks
-        plt.yticks([])
+        # draw the positive arrows
+        for i in range(len(pos_inds)):
+            dist = pos_widths[i]
+            arrow_obj = plt.arrow(
+                pos_lefts[i], pos_inds[i], max(dist-hl_scaled, 0.000001), 0,
+                head_length=min(dist, hl_scaled),
+                color='#5876e2', width=bar_width,
+                head_width=bar_width
+            )
+
+            if pos_low is not None and i < len(pos_low):
+                plt.errorbar(
+                    pos_lefts[i] + pos_widths[i], pos_inds[i],
+                    xerr=np.array([[pos_widths[i] - pos_low[i]], [pos_high[i] - pos_widths[i]]]),
+                    ecolor='#5876e2'
+                )
+
+            txt_obj = plt.text(
+                pos_lefts[i] + 0.5*dist, pos_inds[i], "+"+str(np.round(pos_widths[i],4)),
+                horizontalalignment='center', verticalalignment='center', color="white",
+                fontsize=10
+            )
+            text_bbox = txt_obj.get_window_extent(renderer=renderer)
+            arrow_bbox = arrow_obj.get_window_extent(renderer=renderer)
+
+            # if the text overflows the arrow then draw it after the arrow
+            if text_bbox.width > arrow_bbox.width:
+                txt_obj.remove()
+
+                txt_obj = plt.text(
+                    pos_lefts[i] + (5/72)*bbox_to_xscale + dist, pos_inds[i], "+"+str(np.round(pos_widths[i],4)),
+                    horizontalalignment='left', verticalalignment='center', color='#5876e2',
+                    fontsize=10
+                )
+
+        # draw the negative arrows
+        for i in range(len(neg_inds)):
+            dist = neg_widths[i]
+
+            arrow_obj = plt.arrow(
+                neg_lefts[i], neg_inds[i], -max(-dist-hl_scaled, 0.000001), 0,
+                head_length=min(-dist, hl_scaled),
+                color='#d1493e', width=bar_width,
+                head_width=bar_width
+            )
+
+            if neg_low is not None and i < len(neg_low):
+                plt.errorbar(
+                    neg_lefts[i] + neg_widths[i], neg_inds[i],
+                    xerr=np.array([[neg_widths[i] - neg_low[i]], [neg_high[i] - neg_widths[i]]]),
+                    ecolor='#d1493e'
+                )
+
+            txt_obj = plt.text(
+                neg_lefts[i] + 0.5*dist, neg_inds[i], str(np.round(neg_widths[i],4)),
+                horizontalalignment='center', verticalalignment='center', color="white",
+                fontsize=10
+            )
+            text_bbox = txt_obj.get_window_extent(renderer=renderer)
+            arrow_bbox = arrow_obj.get_window_extent(renderer=renderer)
+
+            # if the text overflows the arrow then draw it after the arrow
+            if text_bbox.width > arrow_bbox.width:
+                txt_obj.remove()
+
+                txt_obj = plt.text(
+                    neg_lefts[i] - (5/72)*bbox_to_xscale + dist, neg_inds[i], str(np.round(neg_widths[i],4)),
+                    horizontalalignment='right', verticalalignment='center', color='#d1493e',
+                    fontsize=10
+                )
+            
+        # draw the y-ticks twice, once in gray and then again with just the feature names in black
+        plt.yticks(list(range(num_features)), yticklabels[:-1], fontsize=10)
+
+        # put horizontal lines for each feature row
+        for i in range(num_features):
+            plt.axhline(i, color="#cccccc", lw=0.5, dashes=(1, 5), zorder=-1)
+
+        # mark the prior expected value and the model prediction
+        plt.axvline(base_value, 0, 1/num_features, color="#bbbbbb", linestyle="--", linewidth=0.5, zorder=-1)
+        fx = base_value + shap_values.sum()
+        plt.axvline(fx, 0, 1, color="#bbbbbb", linestyle="--", linewidth=0.5, zorder=-1)
+
+        # clean up the main axis
+        plt.gca().xaxis.set_ticks_position('bottom')
+        plt.gca().yaxis.set_ticks_position('none')
+        plt.gca().spines['right'].set_visible(False)
+        plt.gca().spines['top'].set_visible(False)
+        plt.gca().spines['left'].set_visible(False)
+        ax.tick_params(labelsize=10)
+        #plt.xlabel("\nModel output", fontsize=12)
+
+        # draw the base value tick mark
+        xmin, xmax = ax.get_xlim()
+        ax2 = ax.twiny()
+        ax2.set_xlim(xmin, xmax)
+        ax2.set_xticks([base_value+1e-8])  # The 1e-8 is so matplotlib 3.3 doesn't try and collapse the ticks
+        ax2.set_xticklabels([f"\nBase Value $=$ {str(np.round(base_value,4))}"], fontsize=12, ha="center")
+
+        # draw the f(x) tick mark
+        ax3 = ax2.twiny()
+        ax3.set_xlim(xmin, xmax)
+
+        # The 1e-8 is so matplotlib 3.3 doesn't try and collapse the ticks
+        ax3.set_xticks([
+            base_value + shap_values.sum() + 1e-8,
+        ])
+        ax3.set_xticklabels([f"\nUncertainty $=$ {str(np.round(fx,4))}"], fontsize=12, ha="center")
+        tick_labels = ax3.xaxis.get_majorticklabels()
+        tick_labels[0].set_transform(tick_labels[0].get_transform(
+        ) + matplotlib.transforms.ScaledTranslation(-10/72., 0, fig.dpi_scale_trans))
+
+        # adjust the position of the uncertainty label
+        tick_labels = ax2.xaxis.get_majorticklabels()
+        tick_labels[0].set_transform(tick_labels[0].get_transform(
+        ) + matplotlib.transforms.ScaledTranslation(-20/72., 0, fig.dpi_scale_trans))
