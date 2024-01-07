@@ -76,14 +76,14 @@ def diversity_degree(data, n_classes):
     # Ensure 'n' has at least 'n_classes' elements to avoid division by zero issues
     n = np.append(n, [0] * (n_classes - len(n)))
     
-    # Calculate the Logarithmic Relative Information Deficiency (LRID)
+    # Calculate the Likelihood Ratio Imbalance Degree (LRID)
     LRID = np.nansum([(nc * np.log(N / (n_classes * nc)) if nc > 0 else 0) for nc in n])
     
     # Initialize an array for the null diversity
     null_diversity = np.zeros(n_classes)
     null_diversity[0] = N
     
-    # Calculate the information deficiency summation for null diversity
+    # Calculate the Imbalance Degree summation for null diversity
     null_diversity_LRID = np.nansum([(nc * np.log(N / (n_classes * nc)) if nc > 0 else 0) for nc in null_diversity])
     
     # Calculate and return the diversity degree score
