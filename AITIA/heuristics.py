@@ -729,14 +729,18 @@ class ClassLikelihood:
         likelihood = 1.0
         for idx, feature in self.data.items():
             if feature['type'] == 'continuous':
-                likelihood *= norm.cdf(instance[idx], loc=feature['mean'][target_class], scale=feature['std'][target_class])
+                multiplier = norm.cdf(instance[idx], loc=feature['mean'][target_class], scale=feature['std'][target_class])
+                if not np.isnan(multiplier):
+                    likelihood *= multiplier
             else:
                 if instance[idx] not in self.data[idx]['counts'][target_class]:
-                    raise ValueError(f"Category {instance[idx]} not found in training set for feature {idx}")
-                class_total = 0
-                for class_val in self.data[idx]['counts'].keys():
-                    class_total += self.data[idx]['counts'][class_val][instance[idx]]
-                likelihood *= self.data[idx]['counts'][target_class][instance[idx]]/class_total
+                    #raise ValueError(f"Category {instance[idx]} not found in training set for feature {idx}")
+                    pass
+                else:
+                    class_total = 0
+                    for class_val in self.data[idx]['counts'].keys():
+                        class_total += self.data[idx]['counts'][class_val][instance[idx]]
+                    likelihood *= self.data[idx]['counts'][target_class][instance[idx]]/class_total
 
         return likelihood
     
@@ -785,7 +789,7 @@ class ClassLikelihood:
         # Calculate the total evidence across all classes
         total_evidence = sum(evidence_volume_per_class)
         
-        # Calculate the percentage share of evidence volume for each class
+        # Calculate the percentage share of evidence volume for each class    
         evidence_share_per_class = [int((ev / total_evidence) * 100) for ev in evidence_volume_per_class]
 
         # Create a list of evidence labels based on the percentage share
@@ -809,24 +813,27 @@ class ClassLikelihood:
         """
 
         # Initialize evidence
-        evidence = 1
+        evidence = 0
 
         # Iterate over features in the data
         for idx, feature in self.data.items():
             if feature['type'] == 'continuous':
-                # Calculate evidence for continuous features
-                evidence *= (norm.cdf(instance[idx], loc=feature['mean'][target_class], scale=feature['std'][target_class])) * feature['importance']
+                if feature['std'][target_class] > 0:
+                    # Calculate evidence for continuous features
+                    multiplier = norm.cdf(instance[idx], loc=feature['mean'][target_class], scale=feature['std'][target_class])
+                    if not np.isnan(multiplier):
+                        evidence += multiplier * feature['importance']
             else:
                 # Calculate evidence for categorical features
                 if instance[idx] not in self.data[idx]['counts'][target_class]:
-                    raise ValueError(f"Category {instance[idx]} not found in the training set for feature {idx}")
-
-                # Calculate evidence using category counts
-                class_total = 0
-                for class_val in self.data[idx]['counts'].keys():
-                    class_total += self.data[idx]['counts'][class_val][instance[idx]]
-                evidence *= (self.data[idx]['counts'][target_class][instance[idx]] / class_total) * feature['importance']
-
+                    #raise ValueError(f"Category {instance[idx]} not found in the training set for feature {idx}")
+                    pass
+                else:
+                    # Calculate evidence using category counts
+                    class_total = 0
+                    for class_val in self.data[idx]['counts'].keys():
+                        class_total += self.data[idx]['counts'][class_val][instance[idx]]
+                    evidence += (self.data[idx]['counts'][target_class][instance[idx]] / class_total) * feature['importance']
         return evidence
     
 

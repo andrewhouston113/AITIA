@@ -58,13 +58,13 @@ class MisclassificationExplainer:
         explainer.plot_results()
     """
 
-    def __init__(self, n_neighbors=10, max_depth=4, balanced=False):
+    def __init__(self, n_neighbors=10, max_depth=4, balanced=False, categorical_idx=[]):
         self.KDN = KNeighbors(n_neighbors)
         self.DS = DisjunctSize()
         self.DCP = DisjunctClass(max_depth=max_depth, balanced=balanced)
-        self.CLD = ClassLikelihood()
+        self.CLD = ClassLikelihood(categorical_idx=categorical_idx)
 
-    def fit(self, X, y, categorical_idx=[]):
+    def fit(self, X, y):
         """
         Fit the internal models to the input data.
 
@@ -80,7 +80,7 @@ class MisclassificationExplainer:
         self.KDN.fit(X,y)
         self.DS.fit(X,y)
         self.DCP.fit(X,y)
-        self.CLD.fit(X, y, categorical_idx=categorical_idx)
+        self.CLD.fit(X, y)
     
     def calculate_heuristics(self, X, y):
         """
@@ -99,10 +99,10 @@ class MisclassificationExplainer:
         DCP_score = self.DCP.calculate_percentage(X,y)
         CLD_score = self.CLD.calculate_class_likelihood_difference(X,y)
         
-        return {'KDN_scores': KDN_score,
-                'DS_scores': DS_score,
-                'DCP_scores': DCP_score,
-                'CLD_scores': CLD_score}
+        return {'Disagreeing Neighbours': KDN_score,
+                'Disjunct Size': [-score for score in DS_score],
+                'Disjunct Class Percentage': [-score for score in DCP_score],
+                'Class-likelihood Difference': [-score for score in CLD_score]}
 
     def explain(self, model, X, y):
         """
@@ -128,8 +128,13 @@ class MisclassificationExplainer:
 
         results = {}
         for heuristic, heuristic_scores in scores.items():
-            # Standardize heuristic scores using z-score normalization
-            heuristic_scores_ = stats.zscore(heuristic_scores)
+            
+            if heuristic == 'Disagreeing Neighbours':
+                # Standardize heuristic scores using z-score normalization
+                heuristic_scores_ = stats.zscore(heuristic_scores)
+            else:
+                # Standardize heuristic scores using z-score normalization
+                heuristic_scores_ = -stats.zscore(heuristic_scores)
             # Add a constant term for logistic regression
             heuristic_scores_ = sm.add_constant(heuristic_scores_)
             
@@ -181,13 +186,17 @@ class MisclassificationExplainer:
                   max_value=int(np.ceil(max([v['confidence_interval'][1] for v in self.results.values()])*1.1)), 
                   min_value=int(0))
         ax.set_title('A) Odd Ratios')
+
+        # Define line styles and markers for each line
+        line_styles = ['--', ':', '-.', '-', '-']
+        markers = ['o', 's', '^', 'D', 'v']
         
         # Produce the ROC curves
         fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(15, 5))
         
         legend = []
-        for k, v in self.results.items():
-            axes[0].plot(v['roc_curve']['fpr'], v['roc_curve']['tpr'], alpha=1)
+        for i, (k, v) in enumerate(self.results.items()):
+            axes[0].plot(v['roc_curve']['fpr'], v['roc_curve']['tpr'], alpha=1, linestyle=line_styles[i])
             legend.append(f'{k}, AUROC = {np.round(v["auroc"], 2)}')
         
         axes[0].legend(legend, loc='lower right')
@@ -200,8 +209,8 @@ class MisclassificationExplainer:
 
         # Produce the Precision-Recall curves
         legend = []
-        for k, v in self.results.items():
-            axes[1].plot(v['precision_recall_curve']['recall'], v['precision_recall_curve']['precision'], alpha=1)
+        for i, (k, v) in enumerate(self.results.items()):
+            axes[1].plot(v['precision_recall_curve']['recall'], v['precision_recall_curve']['precision'], alpha=1, linestyle=line_styles[i])
             legend.append(f'{k}, AUPRC = {np.round(v["auprc"], 2)}')
 
         axes[1].set_xlim([-0.01, 1.01])  # 'xlim' and 'ylim' instead of 'set_xlim' and 'set_ylim'

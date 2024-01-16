@@ -63,7 +63,8 @@ class UncertaintyEstimator:
         self.y = y
         
         # Tune the clustering system to determine the number of clusters and their weights.
-        n_clusters, weights = self._tune_clustering_system()
+        n_clusters = 3
+        weights = [1.0,1.0,1.0,1.0,1.0,1.0,1.0]#self._tune_clustering_system()
         self.weights = weights
         
         # Create a Stratified K-Fold cross-validator for model evaluation.
@@ -94,6 +95,7 @@ class UncertaintyEstimator:
             misclassifications = np.append(misclassifications, self.knowledge_base['misclassifications'], axis=0)
         
         self.heuristics = heuristics
+        misclassifications = np.array(misclassifications)
         
         ## Weight heuristics by the determined weights.
         heuristics = heuristics * weights
@@ -105,7 +107,7 @@ class UncertaintyEstimator:
                     
         # Assign data points to clusters based on their membership.
         cluster_membership = np.argmax(u, axis=0)
-        self.Cluster_IH_mean = [np.nanmean(heuristics[np.where(cluster_membership == group)[0]]) for group in range(n_clusters)]
+        self.Cluster_IH_mean = [np.nanmean(misclassifications[np.where(cluster_membership == group)[0]]) for group in range(n_clusters)]
 
         # Fit the model on the full dataset and create a heuristic calculator for future use.
         self.model.fit(X, y)
@@ -243,7 +245,7 @@ class UncertaintyEstimator:
         tuning_res = gp_minimize(self._heuristic_weightings,  # Function to minimize.
                                 [(2, 5), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0)],  # Bounds on each dimension of x.
                                 acq_func="gp_hedge",  # Acquisition function for optimization.
-                                n_calls=100,  # Number of evaluations of the objective function.
+                                n_calls=6,  # Number of evaluations of the objective function.
                                 n_random_starts=5,  # Number of random initialization points.
                                 random_state=42,  # Random seed for reproducibility.
                                 callback=early_stopping,  # Early stopping callback.
@@ -307,6 +309,8 @@ class UncertaintyEstimator:
             if self.knowledge_base != None:
                 train_heuristics = np.append(train_heuristics, self.knowledge_base['heuristics'], axis=0)
                 train_misclassifications = np.append(train_misclassifications, self.knowledge_base['misclassifications'], axis=0)
+            
+            train_misclassifications = np.array(train_misclassifications)
 
             # Weight the heuristics by the given weights.
             train_heuristics = train_heuristics * weights
@@ -318,7 +322,7 @@ class UncertaintyEstimator:
 
             # Calculate cluster-specific means for training data.
             cluster_membership = np.argmax(u, axis=0)
-            Cluster_IH_mean = [np.nanmean(train_heuristics[np.where(cluster_membership == group)[0]]) for group in range(n_clusters)]
+            Cluster_IH_mean = [np.nanmean(train_misclassifications[np.where(cluster_membership == group)[0]]) for group in range(n_clusters)]
 
             # Estimate complexity of the test set using the trained clustering system.
             u, u0, d, jm, p, fpc = fuzz.cluster.cmeans_predict(
