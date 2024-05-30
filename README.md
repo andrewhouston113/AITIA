@@ -41,7 +41,7 @@ explainer.explain(X_train, x=X_train[:10,:], feature_names=['Feature1', 'Feature
 
 ## Misclassification Analysis
 This method explains misclassifications using heuristic scores and logistic regression. 
-It makes predictions using the provided model, identifies misclassifications, calculates heuristic scores, standardizes them using z-score normalisation, 
+It makes predictions using the provided model, identifies misclassifications, calculates heuristic scores, standardises them using z-score normalisation, 
 and fits a logistic regression model to understand the associations between each heuristic and the misclassifications events. 
 It also computes AUROC and Area Under the AUPRC scores for each heuristic.
 
