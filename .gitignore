@@ -1,0 +1,5 @@
+# Local files
+/local_only/*
+
+# Data
+/data/*
